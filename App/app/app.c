@@ -1786,7 +1786,11 @@ void APP_TimeSlice500ms(void)
     ) {
         BACKLIGHT_TurnOff();
 #ifdef ENABLE_FEAT_F4HWN_LOGO_SAV
-        if (gSetting_set_sav != SET_SAV_OFF && gScreenToDisplay == DISPLAY_MAIN) {
+        if (gSetting_set_sav != SET_SAV_OFF &&
+            gScreenToDisplay == DISPLAY_MAIN &&
+            gCurrentFunction != FUNCTION_TRANSMIT &&
+            !gPttIsPressed)
+        {
             if (gSetting_set_sav == SET_SAV_LOGO)
                 UI_DisplayLogo();
             else if (gSetting_set_sav == SET_SAV_MATRIX)
