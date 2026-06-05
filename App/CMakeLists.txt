@@ -137,6 +137,13 @@ enable_feature(ENABLE_PWRON_PASSWORD
     ui/lock.c
 )
 enable_feature(ENABLE_DTMF_CALLING)
+enable_feature(ENABLE_MESSENGER
+    app/messenger.c
+    ui/messenger.c
+)
+enable_feature(ENABLE_MESSENGER_DELIVERY_NOTIFICATION)
+enable_feature(ENABLE_MESSENGER_FSK_MUTE)
+enable_feature(ENABLE_MESSENGER_NOTIFICATION)
 enable_feature(ENABLE_FLASHLIGHT
     app/flashlight.c
 )

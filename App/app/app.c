@@ -28,6 +28,9 @@
     #include "app/beam.h"
 #endif
 #include "app/app.h"
+#ifdef ENABLE_MESSENGER
+    #include "app/messenger.h"
+#endif
 #include "app/chFrScanner.h"
 #include "app/dtmf.h"
 #ifdef ENABLE_FLASHLIGHT
@@ -86,6 +89,11 @@ static bool flagSaveVfo;
 static bool flagSaveSettings;
 static bool flagSaveChannel;
 
+#ifdef ENABLE_MESSENGER
+    bool    gPlayMSGRing      = false;
+    uint8_t gPlayMSGRingCount = 0;
+#endif
+
 static void ProcessKey(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld);
 
 
@@ -100,6 +108,10 @@ void (*ProcessKeysFunctions[])(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld) 
 
 #ifdef ENABLE_AIRCOPY
     [DISPLAY_AIRCOPY] = &AIRCOPY_ProcessKeys,
+#endif
+
+#ifdef ENABLE_MESSENGER
+    [DISPLAY_MSG] = &MSG_ProcessKeys,
 #endif
 };
 

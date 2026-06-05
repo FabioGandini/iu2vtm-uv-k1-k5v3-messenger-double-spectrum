@@ -23,6 +23,9 @@
 #include "frequencies.h"
 #include <helper/battery.h>
 #include "radio.h"
+#ifdef ENABLE_MESSENGER
+    #include "app/messenger.h"
+#endif
 #include <driver/backlight.h>
 
 enum POWER_OnDisplayMode_t {
@@ -308,6 +311,9 @@ typedef struct {
 #ifdef ENABLE_RSSI_BAR
     uint8_t               S0_LEVEL;
     uint8_t               S9_LEVEL;
+#endif
+#ifdef ENABLE_MESSENGER
+    MessengerConfig       MESSENGER_CONFIG;
 #endif
 } EEPROM_Config_t;
 
