@@ -135,20 +135,13 @@ static uint8_t ScreenSaverRandom(void)
 static void ScreenSaverSetPixel(uint8_t x, uint8_t y, bool fill)
 {
     const uint8_t pattern = 1u << (y & 7u);
+    
+    uint8_t *target = (y < 8) ? &gStatusLine[x] : &gFrameBuffer[(y >> 3) - 1][x];
 
-    if (y < 8) {
-        if (fill)
-            gStatusLine[x] |= pattern;
-        else
-            gStatusLine[x] &= (uint8_t)~pattern;
-        return;
-    }
-
-    y -= 8;
     if (fill)
-        gFrameBuffer[y >> 3][x] |= pattern;
+        *target |= pattern;
     else
-        gFrameBuffer[y >> 3][x] &= (uint8_t)~pattern;
+        *target &= (uint8_t)~pattern;
 }
 
 static void ScreenSaverDrawMatrixGlyph(uint8_t x, int16_t y, uint8_t glyph)
