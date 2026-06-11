@@ -185,8 +185,15 @@ void MSG_EnableRX(const bool enable) {
 	if (enable) {
 		MSG_ConfigureFSK(true);
 
-		if(gEeprom.MESSENGER_CONFIG.data.receive)
+		if(gEeprom.MESSENGER_CONFIG.data.receive) {
+			// the K1 chip variant needs an RX DSP restart after the FSK
+			// config is changed, or the demodulator never detects sync;
+			// aircopy (working on this hardware) does the same via
+			// BK4819_PrepareFSKReceive()
+			BK4819_Idle();
+			BK4819_RX_TurnOn();
 			BK4819_FskEnableRx();
+		}
 	} else {
 		BK4819_WriteRegister(BK4819_REG_70, 0);
 		BK4819_WriteRegister(BK4819_REG_58, 0);
@@ -677,11 +684,13 @@ void MSG_ConfigureFSK(bool rx)
 									//   6 = ???
 									//   7 = FFSK 1200 / 1800 RX
 									//
-				(3u << 8) |			// 0 FSK RX gain
+				(0u << 8) |			// 0 FSK RX gain
 									//   0 ~ 3
 									//
-				(0u << 6) |			// 0 ???
-									//   0 ~ 3
+				(3u << 6) |			// 3 ??? .. aircopy (the only FSK RX
+									//   path verified working on the K1
+									//   chip variant) sets this field to 3
+									//   with RX gain 0 (REG_58 = 0x00C1)
 									//
 				(0u << 4) |			// 0 FSK preamble type selection
 									//   0 = 0xAA or 0x55 due to the MSB of FSK sync byte 0
@@ -795,7 +804,9 @@ void MSG_ConfigureFSK(bool rx)
 				(0u        <<       10) |   // 0/1     1 = invert data when RX
 				(0u        <<        9) |   // 0/1     1 = invert data when TX
 				(0u        <<        8) |   // 0/1     ???
-				((rx ? 0u : 15u) <<  4) |   // 0 ~ 15  preamble length .. bit toggling
+				((rx ? 6u : 15u) <<  4) |   // 0 ~ 15  preamble length .. bit toggling
+				                            // RX: 6 like aircopy on the K1 chip
+				                            // (0 here may prevent bit-clock lock)
 				(1u        <<        3) |   // 0/1     sync length
 				(0u        <<        0)     // 0 ~ 7   ???
 				
