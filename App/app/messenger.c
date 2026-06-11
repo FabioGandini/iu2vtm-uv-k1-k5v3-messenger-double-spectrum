@@ -195,6 +195,11 @@ void MSG_EnableRX(const bool enable) {
 			BK4819_Idle();
 			BK4819_RX_TurnOn();
 			BK4819_FskEnableRx();
+			// BK4829: AF_MUTE also gates the FM demod that feeds the FSK
+			// slicer, so the modem only hears with the AF path open (this
+			// is why RX only worked with monitor on). Inaudible: the
+			// speaker amp GPIO stays off while the squelch is closed.
+			BK4819_SetAF(BK4819_AF_FM);
 		}
 	} else {
 		BK4819_WriteRegister(BK4819_REG_70, 0);
@@ -380,6 +385,20 @@ void MSG_CheckRxTimeout(void) {
 			baselineSet = true;
 		}
 		gMsgDebug0BDiff |= (uint16_t)(now0B ^ baseline0B);
+	}
+
+	// BK4829 quirk: many code paths (squelch setup, beeps, tones) leave the
+	// AF path on AF_MUTE, which also silences the FM demod feeding the FSK
+	// slicer - the modem then misses every packet until something reopens
+	// the AF (e.g. monitor). While idle with messenger RX enabled, force the
+	// AF path back to FM; the write is deduplicated by the driver cache and
+	// is inaudible because the speaker amp GPIO stays off.
+	if (gEeprom.MESSENGER_CONFIG.data.receive &&
+	    gCurrentFunction == FUNCTION_FOREGROUND &&
+	    msgStatus == READY) {
+		const uint8_t af = (BK4819_ReadRegister(BK4819_REG_47) >> 8) & 0xFu;
+		if (af == BK4819_AF_MUTE)
+			BK4819_SetAF(BK4819_AF_FM);
 	}
 
 	if (msgStatus != RECEIVING) {
