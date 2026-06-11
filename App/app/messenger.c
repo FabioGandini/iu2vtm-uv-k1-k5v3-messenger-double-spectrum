@@ -74,6 +74,8 @@ uint16_t gErrorsDuringMSG;
 
 // on-screen FSK interrupt debug counters (no UART needed)
 uint16_t gMsgDebugLastBits;
+uint16_t gMsgDebug0BDiff;
+uint16_t gMsgDebugSeen02;
 uint8_t gMsgDebugSyncCount;
 uint8_t gMsgDebugFifoCount;
 uint8_t gMsgDebugFinishedCount;
@@ -366,6 +368,20 @@ void MSG_StorePacket(const uint16_t interrupt_bits) {
 // FSK reception (sync detected but FSK_RX_FINISHED never arrives), which
 // otherwise leaves msgStatus == RECEIVING and the squelch open forever
 void MSG_CheckRxTimeout(void) {
+	// accumulate which REG_0B bits ever deviate from the value sampled at
+	// boot: tells us whether the FSK demod state machine reacts at all to
+	// an incoming transmission even when no interrupt is latched
+	{
+		static uint16_t baseline0B;
+		static bool baselineSet;
+		const uint16_t now0B = BK4819_ReadRegister(BK4819_REG_0B);
+		if (!baselineSet) {
+			baseline0B = now0B;
+			baselineSet = true;
+		}
+		gMsgDebug0BDiff |= (uint16_t)(now0B ^ baseline0B);
+	}
+
 	if (msgStatus != RECEIVING) {
 		gMsgRxTimeout10ms = 0;
 		return;

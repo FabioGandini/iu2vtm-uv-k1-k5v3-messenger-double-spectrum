@@ -704,6 +704,12 @@ static void CheckRadioInterrupts(void)
         BK4819_WriteRegister(BK4819_REG_02, 0);
         interrupts.__raw = BK4819_ReadRegister(BK4819_REG_02) | preClearBits;
 
+#ifdef ENABLE_MESSENGER
+        // accumulate every REG_02 bit ever observed: tells us whether FSK
+        // interrupt bits are produced at all on this chip variant
+        gMsgDebugSeen02 |= interrupts.__raw;
+#endif
+
         // 0 = no phase shift
         // 1 = 120deg phase shift
         // 2 = 180deg phase shift

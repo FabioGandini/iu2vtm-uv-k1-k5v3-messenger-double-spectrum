@@ -89,19 +89,19 @@ void UI_DisplayMSG(void) {
 	//UI_PrintStringSmallNormal(String, 3, 0, 6);
 	GUI_DisplaySmallest(String, 5, 48, false, true);
 
-	// debug msg: live FSK register dump (no UART needed)
+	// debug msg: FSK activity monitor (no UART needed)
 	// R = MsgRX setting, Y/F/E = sync/fifo/finished interrupt counters,
-	// then chip state: REG_3F (irq mask), REG_58 (FSK mode/enable),
-	// REG_59 (RX enable bit12), REG_0B (FSK demod live status)
+	// then: every REG_02 bit ever latched, every REG_0B bit that ever
+	// changed since boot, REG_58 (FSK mode), REG_0B live
 	// NOTE: gFrameBuffer is only 7 rows tall (y must be 0-55), so this
 	// must fit on the single free row at y=42 (x>=14)
 	memset(String, 0, sizeof(String));
 	sprintf(String, "R%uY%uF%uE%u %04X %04X %04X %04X",
 		gEeprom.MESSENGER_CONFIG.data.receive,
 		gMsgDebugSyncCount, gMsgDebugFifoCount, gMsgDebugFinishedCount,
-		BK4819_ReadRegister(BK4819_REG_3F),
+		gMsgDebugSeen02,
+		gMsgDebug0BDiff,
 		BK4819_ReadRegister(BK4819_REG_58),
-		BK4819_ReadRegister(BK4819_REG_59),
 		BK4819_ReadRegister(BK4819_REG_0B));
 	GUI_DisplaySmallest(String, 14, 42, false, true);
 
