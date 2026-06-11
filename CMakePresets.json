@@ -87,6 +87,7 @@
             "name": "Custom",
             "inherits": "default",
             "cacheVariables": {
+                "ENABLE_SPECTRUM": true,
                 "EDITION_STRING": "Custom",
                 "TARGET": "f4hwn.custom"
             }
