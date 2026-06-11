@@ -671,7 +671,7 @@ static void CheckRadioInterrupts(void)
     // bounded: if REG_02 stays asserted (e.g. a level-triggered sqlLost while
     // RSSI remains above threshold), don't freeze the whole main loop forever -
     // bail out and retry on the next 10ms tick
-    for (uint8_t loopGuard = 0; (loopGuard < 16) && (BK4819_ReadRegister(BK4819_REG_0C) & 1u); loopGuard++) { // BK chip interrupt request
+    for (uint8_t loopGuard = 0; loopGuard < 16; loopGuard++) {
 
         union {
             struct {
@@ -695,10 +695,12 @@ static void CheckRadioInterrupts(void)
             uint16_t __raw;
         } interrupts;
 
-        // read once before clearing to catch momentary FSK events (sync/finished),
-        // then clear+read again in the original write-then-read order that the
-        // stock squelch (sqlLost/sqlFound) handling relied on
+        // poll REG_02 directly instead of gating on REG_0C bit0: on the K1
+        // chip variant REG_0C appears to not assert for FSK sources, which
+        // silently drops every messenger RX interrupt
         const uint16_t preClearBits = BK4819_ReadRegister(BK4819_REG_02);
+        if (preClearBits == 0 && !(BK4819_ReadRegister(BK4819_REG_0C) & 1u))
+            break;
         BK4819_WriteRegister(BK4819_REG_02, 0);
         interrupts.__raw = BK4819_ReadRegister(BK4819_REG_02) | preClearBits;
 
