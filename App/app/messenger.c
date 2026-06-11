@@ -817,7 +817,11 @@ void MSG_ConfigureFSK(bool rx)
 				(0u        <<       13) |   // 0/1     1 = scramble
 				(0u        <<       12) |   // 0/1     1 = enable RX
 				(0u        <<       11) |   // 0/1     1 = enable TX
-				(0u        <<       10) |   // 0/1     1 = invert data when RX
+				(1u        <<       10) |   // 0/1     1 = invert data when RX
+				                            // K1 chip variant test: squelch/dtmf
+				                            // interrupts work and REG_0B moves but
+				                            // FSK sync never fires with correct
+				                            // registers - suspect inverted RX slicer
 				(0u        <<        9) |   // 0/1     1 = invert data when TX
 				(0u        <<        8) |   // 0/1     ???
 				((rx ? 6u : 15u) <<  4) |   // 0 ~ 15  preamble length .. bit toggling
