@@ -8,6 +8,16 @@ This repository is a fork of the [F4HWN custom firmware](https://github.com/arme
 
 A big thanks to DualTachyon, who paved the way by releasing the very first open-source [firmware](https://github.com/DualTachyon/uv-k5-firmware) for the UV-K5 V1. None of this would have been possible without that initial work !
 
+# About this fork (feature_messenger branch)
+
+This fork adds to the upstream F4HWN/armel firmware, on the `feature_messenger` branch:
+
+- **FSK text messenger** ported from the [kamilsss655 UV-K5 firmware](https://github.com/kamilsss655/uv-k5-firmware-custom) (originally by [@joaquimorg](https://github.com/joaquimorg)): send and receive short text messages between radios (AFSK1200/FSK700/FSK450), with delivery ACK and optional ChaCha20 encryption. Adapted for the BK4829 chip variant of the UV-K1.
+- **Spectrum analyzer** ported from the same kamilsss655 firmware (originally by [@fagci](https://github.com/fagci)), launched with **F+7**, including memory-channel scan mode. The F4HWN bandscope stays on F+5; the two coexist.
+- A modified CHIRP driver (`chirp/f4hwn.fusion.chirp.v5.5.0.messenger.py`, based on the F4HWN driver) exposing the messenger settings, including the encryption password.
+
+All credit for the messenger, crypto and spectrum code goes to their original authors; this branch only adapts them to the UV-K1/PY32 platform.
+
 # A note for developers who intend to fork this project
 
 This firmware is distributed under the Apache 2.0 License, carrying forward the original copyright of DualTachyon, whose work laid the foundation for the UV-K5 open-source ecosystem.
