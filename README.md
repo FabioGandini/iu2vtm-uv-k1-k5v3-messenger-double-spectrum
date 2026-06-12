@@ -29,12 +29,10 @@ Maintaining an open-source fork is the best way to help build a healthy and sust
 > EN -  Use this firmware at your own risk. There is absolutely no guarantee that it will work in any way shape or form on your radio(s), it may even brick your radio(s), in which case, you'd need to buy another radio.
 Anyway, have fun.
 
-> [!NOTE]
-> EN - About CHIRP, as with many other firmwares, you need to use a dedicated driver. The matching CHIRP driver is now bundled with each release of this repository, so you can download the firmware and its driver together from the [Releases page](https://github.com/armel/uv-k1-k5v3-firmware-custom/releases).
->
 
-> [!CAUTION]
-> EN - I recommend to backup your calibration data with [uvtools2](https://armel.github.io/uvtools2/) just after flashing this firmware. It's a good reflex to have. 
+# DOWNLOAD
+https://github.com/FabioGandini/uv-k1-k5v3-firmware-custom/releases/tag/v1.0.0
+
 
 
 ## License
