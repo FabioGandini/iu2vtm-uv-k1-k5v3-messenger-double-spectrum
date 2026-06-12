@@ -46,14 +46,6 @@ extern char rxMessage[4][PAYLOAD_LENGTH + 2];
 extern uint8_t hasNewMessage;
 extern uint8_t keyTickCounter;
 
-// on-screen FSK interrupt debug counters (no UART needed)
-extern uint16_t gMsgDebugLastBits;
-extern uint16_t gMsgDebug0BDiff;
-extern uint16_t gMsgDebugSeen02;
-extern uint8_t gMsgDebugSyncCount;
-extern uint8_t gMsgDebugFifoCount;
-extern uint8_t gMsgDebugFinishedCount;
-
 typedef enum MsgStatus {
     READY,
     SENDING,

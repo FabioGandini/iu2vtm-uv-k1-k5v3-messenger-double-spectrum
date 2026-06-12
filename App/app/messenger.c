@@ -72,14 +72,6 @@ union DataPacket dataPacket;
 
 uint16_t gErrorsDuringMSG;
 
-// on-screen FSK interrupt debug counters (no UART needed)
-uint16_t gMsgDebugLastBits;
-uint16_t gMsgDebug0BDiff;
-uint16_t gMsgDebugSeen02;
-uint8_t gMsgDebugSyncCount;
-uint8_t gMsgDebugFifoCount;
-uint8_t gMsgDebugFinishedCount;
-
 // recovery watchdog: if FSK_RX_SYNC fires but FSK_RX_FINISHED never
 // follows (demod gets stuck mid-packet), force the FSK RX path back
 // to idle after MSG_RX_TIMEOUT_10MS so the squelch doesn't stay open
@@ -320,11 +312,6 @@ void MSG_StorePacket(const uint16_t interrupt_bits) {
 	const bool rx_fifo_almost_full = (interrupt_bits & BK4819_REG_02_FSK_FIFO_ALMOST_FULL) ? true : false;
 	const bool rx_finished         = (interrupt_bits & BK4819_REG_02_FSK_RX_FINISHED) ? true : false;
 
-	gMsgDebugLastBits = interrupt_bits;
-	if (rx_sync)             gMsgDebugSyncCount++;
-	if (rx_fifo_almost_full) gMsgDebugFifoCount++;
-	if (rx_finished)         gMsgDebugFinishedCount++;
-
 #ifdef ENABLE_UART
 	printf("\nMSG : S%i, F%i, E%i | %i", rx_sync, rx_fifo_almost_full, rx_finished, gFSKWriteIndex);
 #endif
@@ -377,20 +364,6 @@ void MSG_StorePacket(const uint16_t interrupt_bits) {
 // FSK reception (sync detected but FSK_RX_FINISHED never arrives), which
 // otherwise leaves msgStatus == RECEIVING and the squelch open forever
 void MSG_CheckRxTimeout(void) {
-	// accumulate which REG_0B bits ever deviate from the value sampled at
-	// boot: tells us whether the FSK demod state machine reacts at all to
-	// an incoming transmission even when no interrupt is latched
-	{
-		static uint16_t baseline0B;
-		static bool baselineSet;
-		const uint16_t now0B = BK4819_ReadRegister(BK4819_REG_0B);
-		if (!baselineSet) {
-			baseline0B = now0B;
-			baselineSet = true;
-		}
-		gMsgDebug0BDiff |= (uint16_t)(now0B ^ baseline0B);
-	}
-
 	// deferred ACK transmission (see MSG_HandleReceive)
 	if (gMsgAckCountdown10ms && --gMsgAckCountdown10ms == 0)
 		MSG_SendAck();
