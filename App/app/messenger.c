@@ -411,7 +411,9 @@ void MSG_Init() {
     prevLetter = 0;
 	cIndex = 0;
 	#ifdef ENABLE_ENCRYPTION
-		gRecalculateEncKey = true;
+		// ENC_KEY only changes via CHIRP (followed by a reboot), so derive
+		// the 256-bit session key once here instead of polling a flag
+		CRYPTO_Generate256BitKey(gEeprom.ENC_KEY, gEncryptionKey, sizeof(gEeprom.ENC_KEY));
 	#endif
 	MSG_EnableRX(gEeprom.MESSENGER_CONFIG.data.receive);
 }

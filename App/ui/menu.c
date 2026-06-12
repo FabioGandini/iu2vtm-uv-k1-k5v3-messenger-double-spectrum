@@ -176,6 +176,9 @@ const t_menu_item MenuList[] =
     {"MsgRX",       MENU_MSG_RX        },
     {"MsgACK",      MENU_MSG_ACK       },
     {"MsgMod",      MENU_MSG_MOD       },
+#ifdef ENABLE_ENCRYPTION
+    {"MsgEnc",      MENU_MSG_ENC       },
+#endif
 #endif
     // hidden menu items from here on
     // enabled if pressing both the PTT and upper side button at power-on
@@ -1444,6 +1447,9 @@ void UI_DisplayMenu(void)
 #ifdef ENABLE_MESSENGER
         case MENU_MSG_RX:
         case MENU_MSG_ACK:
+#ifdef ENABLE_ENCRYPTION
+        case MENU_MSG_ENC:
+#endif
             strcpy(String, gSubMenu_OFF_ON[gSubMenuSelection]);
             break;
         case MENU_MSG_MOD:

@@ -141,6 +141,10 @@ enable_feature(ENABLE_MESSENGER
     app/messenger.c
     ui/messenger.c
 )
+enable_feature(ENABLE_ENCRYPTION
+    helper/crypto.c
+    external/chacha/chacha.c
+)
 enable_feature(ENABLE_MESSENGER_DELIVERY_NOTIFICATION)
 enable_feature(ENABLE_MESSENGER_FSK_MUTE)
 enable_feature(ENABLE_MESSENGER_NOTIFICATION)

@@ -318,6 +318,9 @@ typedef struct {
 #ifdef ENABLE_MESSENGER
     MessengerConfig       MESSENGER_CONFIG;
 #endif
+#ifdef ENABLE_ENCRYPTION
+    char                  ENC_KEY[16];
+#endif
 } EEPROM_Config_t;
 
 extern EEPROM_Config_t gEeprom;

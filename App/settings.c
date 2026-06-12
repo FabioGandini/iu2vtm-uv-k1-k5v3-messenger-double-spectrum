@@ -439,6 +439,11 @@ gEeprom.FreqChannel[1]   = IS_FREQ_CHANNEL(Data16[5]) ? Data16[5] : (FREQ_CHANNE
     // 0F30..0F3F
     PY25Q16_ReadBuffer(0x00A138, gCustomAesKey, sizeof(gCustomAesKey));
     bHasCustomAesKey = false;
+#ifdef ENABLE_ENCRYPTION
+    // reuse the AES key slot (unused under ENABLE_FEAT_F4HWN: the UART
+    // challenge command is compiled out) for the messenger encryption key
+    PY25Q16_ReadBuffer(0x00A138, gEeprom.ENC_KEY, sizeof(gEeprom.ENC_KEY));
+#endif
     #ifndef ENABLE_FEAT_F4HWN
         for (unsigned int i = 0; i < ARRAY_SIZE(gCustomAesKey); i++)
         {

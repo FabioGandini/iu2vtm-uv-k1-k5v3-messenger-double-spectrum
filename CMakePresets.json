@@ -25,6 +25,7 @@
                 "ENABLE_MESSENGER_DELIVERY_NOTIFICATION": true,
                 "ENABLE_MESSENGER_FSK_MUTE": true,
                 "ENABLE_MESSENGER_NOTIFICATION": true,
+                "ENABLE_ENCRYPTION": true,
                 "ENABLE_FLASHLIGHT": true,
                 "ENABLE_SPECTRUM": false,
                 "ENABLE_BIG_FREQ": true,

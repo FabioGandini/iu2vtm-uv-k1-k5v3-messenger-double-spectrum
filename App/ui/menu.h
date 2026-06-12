@@ -168,6 +168,9 @@ enum
     MENU_MSG_RX,
     MENU_MSG_ACK,
     MENU_MSG_MOD,
+#ifdef ENABLE_ENCRYPTION
+    MENU_MSG_ENC,
+#endif
 #endif
 };
 
