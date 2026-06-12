@@ -1098,8 +1098,9 @@ static void DrawF(uint32_t f) {
   if (currentState == SPECTRUM && appMode == CHANNEL_MODE && isKnownChannel &&
       channelName[0] != 0 && f == lastPeakFrequency) {
     UI_PrintStringSmallBold(channelName, 0, 127, 0);
+    // same big-digits font as the K5 spectrum / main VFO display
     sprintf(String, "%u.%05u", f / 100000, f % 100000);
-    UI_PrintString(String, 2, 127, 1, 8);
+    UI_DisplayFrequency(String, 8, 1, true);
   } else {
     sprintf(String, "%u.%05u", f / 100000, f % 100000);
     UI_PrintStringSmallNormal(String, 8, 127, 0);
@@ -1125,7 +1126,12 @@ static void DrawNums(void) {
       sprintf(String, "%s", scanListAll ? "ALL" : "SL");
       GUI_DisplaySmallest(String, 0, 7, false, true);
       if (isKnownChannel) {
-        // peak channel number, small on the left like the K5 UI
+        // peak channel number, small on the left like the K5 UI;
+        // clear the background first so it stays readable when the
+        // spectrum bars behind it are at full scale
+        for (int x = 0; x < 22; x++)
+          for (int y = 12; y < 20; y++)
+            PutPixel(x, y, false);
         sprintf(String, "M%i", peakChannel + 1);
         GUI_DisplaySmallest(String, 0, 13, false, true);
       }
