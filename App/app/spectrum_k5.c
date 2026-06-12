@@ -1097,10 +1097,25 @@ static void DrawF(uint32_t f) {
   // font would overlap the S-meter row)
   if (currentState == SPECTRUM && appMode == CHANNEL_MODE && isKnownChannel &&
       channelName[0] != 0 && f == lastPeakFrequency) {
+    // the glyphs don't blank their background, so full-scale bars bleed
+    // through the gaps and garble the text: clear just the spans behind
+    // the name (row 0) and the big frequency (rows 1-2) before drawing
+    int len = strlen(channelName);
+    int w = len * 6; // small bold font: 6 px per char
+    int x0 = (128 - w + 1) / 2;
+    memset(gFrameBuffer[0] + x0 - 2, 0, w + 4);
     UI_PrintStringSmallBold(channelName, 0, 127, 0);
+
     // same big-digits font as the K5 spectrum / main VFO display
     sprintf(String, "%u.%05u", f / 100000, f % 100000);
-    UI_DisplayFrequency(String, 8, 1, true);
+    len = strlen(String);
+    w = (len - 1) * 13 + 3; // big digits: 13 px each, the dot 3 px
+    x0 = (128 - w + 1) / 2;
+    if (x0 < 2)
+      x0 = 2;
+    memset(gFrameBuffer[1] + x0 - 2, 0, w + 4);
+    memset(gFrameBuffer[2] + x0 - 2, 0, w + 4);
+    UI_DisplayFrequency(String, x0, 1, false);
   } else {
     sprintf(String, "%u.%05u", f / 100000, f % 100000);
     UI_PrintStringSmallNormal(String, 8, 127, 0);
