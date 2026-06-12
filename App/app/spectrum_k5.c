@@ -254,7 +254,10 @@ static SpectrumSettings settings = {
     .listenBw = BK4819_FILTER_BW_WIDE,
     .modulationType = MODULATION_FM,
     .dbMin = -130,
-    .dbMax = -50,
+    // start at minimum gain: the BK4829 RSSI reads hot and with the K5
+    // default of -50 every bar opens pegged at full scale (the user had
+    // to hold KEY_3 to max this out on every launch)
+    .dbMax = 10,
 };
 
 static uint32_t fMeasure = 0;
@@ -1106,15 +1109,13 @@ static void DrawF(uint32_t f) {
     memset(gFrameBuffer[0] + x0 - 2, 0, w + 4);
     UI_PrintStringSmallBold(channelName, 0, 127, 0);
 
-    // medium two-row font (gFontBig, 8 px per char), the same size the
-    // K5 spectrum uses - the 13 px VFO digits were too big here
+    // single-row small font, centered under the name
     sprintf(String, "%u.%05u", f / 100000, f % 100000);
     len = strlen(String);
-    w = len * 8;
+    w = len * 6;
     x0 = (128 - w + 1) / 2;
     memset(gFrameBuffer[1] + x0 - 2, 0, w + 4);
-    memset(gFrameBuffer[2] + x0 - 2, 0, w + 4);
-    UI_PrintString(String, 0, 127, 1, 8);
+    UI_PrintStringSmallNormal(String, 0, 127, 1);
   } else {
     sprintf(String, "%u.%05u", f / 100000, f % 100000);
     UI_PrintStringSmallNormal(String, 8, 127, 0);
