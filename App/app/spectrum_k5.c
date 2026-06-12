@@ -1067,8 +1067,9 @@ static void DrawSpectrum(void) {
 
 static void DrawStatus(void) {
   if (isKnownChannel) {
-    sprintf(String, "%d/%d M%i:%s", settings.dbMin, settings.dbMax,
-            peakChannel + 1, channelName);
+    // channel name only: with the M-number prefix and the dB range the
+    // name was unreadable on this small screen
+    sprintf(String, "%s", channelName);
   } else {
     sprintf(String, "%d/%d", settings.dbMin, settings.dbMax);
   }
