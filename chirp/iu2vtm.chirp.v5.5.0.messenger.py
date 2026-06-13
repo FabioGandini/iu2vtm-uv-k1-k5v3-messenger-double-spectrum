@@ -1966,41 +1966,6 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
     def get_settings(self):
         _mem = self._memobj
 
-# add menu firmware with version and option display if version 3.0 and up
-        ValFirm = "Firmware : " + self.FIRMWARE_VERSION 
-        Compair1 = "F4HWN v5.0"  
-
-        if self.FIRMWARE_VERSION == "":
-            ValFirm = "Firmware : Only when read from the radio "
-      
-        else:
-            FIRMWARE_VERSION_RADIO = self.FIRMWARE_VERSION
-            ValFirm = ValFirm + " Custom Edition"
-  
-        radio_firmware = RadioSettingGroup("radio_firmwarebasic", ValFirm)
-# add link for mise a jour information
-
-        val = RadioSettingValueBoolean(False)
-        def validate_Go_Web_Firmware(value):
-            if value :
-                msg = "To see information for the update of the Firmware \n"
-                ret = wx.MessageBox(msg, "Warning", wx.OK | wx.CANCEL |
-                                    wx.CANCEL_DEFAULT | wx.ICON_WARNING)
-                if ret == wx.OK :
-                    webbrowser.open(FIRMWARE_VERSION_UPDATE)
-                value = False
-                    
-            return value
-
-        val.set_validate_callback(validate_Go_Web_Firmware)
-        rs = RadioSetting("Update_Firmware_mise_a_jour","To see information for the update of the Firmware, select this box ->", val)
-        rs.set_doc('To see information for the update of the Firmware!')
-        radio_firmware.append(rs)
-
-# end add link for mise a jour information
-
-# end add menu firmware with version and option display
-        
         basic = RadioSettingGroup("basic", "Basic Settings")
         advanced = RadioSettingGroup("advanced", "Advanced Settings")
         keya = RadioSettingGroup("keya", "Programmable Keys")
@@ -2014,7 +1979,6 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
         
         roinfo = RadioSettingGroup("roinfo", "Driver Information + Link WEB")
         top = RadioSettings()
-        top.append(radio_firmware)
         top.append(basic)
         top.append(advanced)
         top.append(keya)
