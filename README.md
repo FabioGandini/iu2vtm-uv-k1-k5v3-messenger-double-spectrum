@@ -9,6 +9,11 @@ Messenger fsk ported from Nunu kamilsss655 https://github.com/kamilsss655
 Additional spectrum analyzer from Nunu kamilsss655 https://github.com/kamilsss655, you can start it with Fn+7
 
 
+# DOWNLOAD
+https://github.com/FabioGandini/uv-k1-k5v3-firmware-custom/releases/tag/v1.0.0
+
+
+
 # A note for developers who intend to fork this project
 
 This firmware is distributed under the Apache 2.0 License, carrying forward the original copyright of DualTachyon, whose work laid the foundation for the UV-K5 open-source ecosystem.
@@ -30,8 +35,6 @@ Maintaining an open-source fork is the best way to help build a healthy and sust
 Anyway, have fun.
 
 
-# DOWNLOAD
-https://github.com/FabioGandini/uv-k1-k5v3-firmware-custom/releases/tag/v1.0.0
 
 
 
