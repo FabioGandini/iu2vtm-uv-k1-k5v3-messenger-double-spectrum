@@ -2079,6 +2079,15 @@ void UI_DisplayMain(void)
                 GUI_DisplaySmallest(String, 110, line == 0 ? 17 : 49, false, true);
            }
         }
+
+        // highlight the VFO currently receiving in dual-VFO view: invert
+        // just the channel name/frequency area of its top row (white-on-
+        // black) so it stands out at a glance against the idle VFO
+        if (!isMainOnly() && FUNCTION_IsRx() && gEeprom.RX_VFO == vfo_num && VfoState[vfo_num] == VFO_STATE_NORMAL)
+        {
+            for (unsigned int col = 32; col < LCD_WIDTH; col++)
+                gFrameBuffer[line][col] ^= 0xFF;
+        }
 #endif
     }
 
