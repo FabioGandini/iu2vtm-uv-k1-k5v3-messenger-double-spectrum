@@ -997,6 +997,11 @@ void BK4819_DisableVox(void)
 
 void BK4819_DisableDTMF(void)
 {
+    // REG_21 (see BK4819_EnableDTMF) is also part of the TX audio filter
+    // setup, not just DTMF decode - keep it at its known-good value even
+    // when the decoder itself (REG_24) is disabled, otherwise it's left at
+    // its post-reset default and TX mic audio breaks (1of11).
+    BK4819_WriteRegister(BK4819_REG_21, 0x06D8);        // 0000 0110 1101 1000
     BK4819_WriteRegister(BK4819_REG_24, 0);
 }
 
