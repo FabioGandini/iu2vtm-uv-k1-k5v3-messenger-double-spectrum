@@ -920,8 +920,21 @@ void RADIO_SetupRegisters(bool switchToForeground)
     // RX expander
     BK4819_SetCompander((gRxVfo->Modulation == MODULATION_FM && gRxVfo->Compander >= 2) ? gRxVfo->Compander : 0);
 
-    BK4819_EnableDTMF();
-    InterruptMask |= BK4819_REG_3F_DTMF_5TONE_FOUND;
+#ifdef ENABLE_MESSENGER
+    if (gEeprom.MESSENGER_CONFIG.data.receive) {
+        // Messenger RX forces AF=FM even with the squelch closed so the FSK
+        // slicer keeps working, which also keeps the BK4829's 5-tone/DTMF
+        // decoder running on raw RF noise/audio - it readily mismatches that
+        // into spurious digits shown as "DTMF 4444444444" etc, regardless of
+        // squelch state. Keep the decoder fully disabled while messenger RX
+        // is on; DTMF calling features are not usable together with it.
+        BK4819_DisableDTMF();
+    } else
+#endif
+    {
+        BK4819_EnableDTMF();
+        InterruptMask |= BK4819_REG_3F_DTMF_5TONE_FOUND;
+    }
 
 #ifdef ENABLE_MESSENGER
     if (gEeprom.MESSENGER_CONFIG.data.receive) {
