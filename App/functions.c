@@ -96,6 +96,15 @@ void FUNCTION_Foreground(const FUNCTION_Type_t PreviousFunction)
         ST7565_FixInterfGlitch();
         gVFO_RSSI_bar_level[0] = 0;
         gVFO_RSSI_bar_level[1] = 0;
+
+#ifdef ENABLE_MESSENGER
+        // FUNCTION_Transmit() tears down the FSK chain (REG_58/59/70/72) so mic
+        // audio reaches the modulator during voice TX. Re-arm messenger RX now
+        // that TX is over, otherwise reception stays dead after any transmit
+        // until the next channel change (K1 TX works, K1 RX silent).
+        if (gEeprom.MESSENGER_CONFIG.data.receive)
+            MSG_EnableRX(true);
+#endif
     } else if (PreviousFunction != FUNCTION_RECEIVE) {
         return;
     }
