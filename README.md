@@ -10,7 +10,11 @@ Messenger fsk ported from Nunu kamilsss655 https://github.com/kamilsss655
 Additional spectrum analyzer from Nunu kamilsss655 https://github.com/kamilsss655.
 
 # TO USE THE MESSENGER ADD IT TO F1,F2 OR MENU BUTTON
+afsk1200k works.
+fsk 450 and 700 are still in test, tx is ok , rx have some issues  
+
 # TO OPEN THE ADDITIONAL SCANNER F+7 
+
 
 # DOWNLOAD
 https://github.com/FabioGandini/uv-k1-k5v3-firmware-custom/releases/tag/v1.0.0
