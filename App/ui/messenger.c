@@ -36,58 +36,51 @@
 
 void UI_DisplayMSG(void) {
 	
-	static char String[37];
-
 	memset(gFrameBuffer, 0, sizeof(gFrameBuffer));
-	memset(String, 0, sizeof(String));
 
-	//UI_PrintStringSmallBold("MESSENGER", 0, 127, 0);
-	UI_PrintStringSmallNormal("Messenger", 1, 127, 0);
-
+	// header (page 0)
+	UI_PrintStringSmallNormal(gMsgEditCallsign ? "Set Callsign" : "Messenger", 1, 127, 0);
 	UI_DrawLineDottedBuffer(gFrameBuffer, 2, 3, 26, 3, true);
 	UI_DrawLineDottedBuffer(gFrameBuffer, 100, 3, 126, 3, true);
 
-	/*if ( msgStatus == SENDING ) {
-		GUI_DisplaySmallest("SENDING", 100, 6, false, true);
-	} else if ( msgStatus == RECEIVING ) {
-		GUI_DisplaySmallest("RECEIVING", 100, 6, false, true);
-	} else {
-		GUI_DisplaySmallest("READY", 100, 6, false, true);
-	}*/
-
-	// RX Screen
-
-	//GUI_DisplaySmallest("RX", 4, 34, false, true);
-
-	memset(String, 0, sizeof(String));
-	
-	uint8_t mPos = 8;
-	const uint8_t mLine = 7;
-	for (int i = 0; i < 4; ++i) {
-		//sprintf(String, "%s", rxMessage[i]);
-		GUI_DisplaySmallest(rxMessage[i], 2, mPos, false, true);
-		mPos += mLine;
-    }
-
-	// TX Screen
-	
-	UI_DrawLineDottedBuffer(gFrameBuffer, 14, 40, 126, 40, true);
-	memset(String, 0, sizeof(String));
-	if ( keyboardType == NUMERIC ) {
-		strcpy(String, "2");
-	} else if ( keyboardType == UPPERCASE ) {		
-		strcpy(String, "B");
-	} else {		
-		strcpy(String, "b");
+	// message history: MSG_VISIBLE_LINES lines in the bigger font, scrollable
+	// with UP/DOWN (gMsgScroll). Each line is truncated to the display width so
+	// it can never overflow past the 128px framebuffer row.
+	{
+		char line[19];
+		int top = (int)(MSG_LINES - MSG_VISIBLE_LINES) - (int)gMsgScroll;
+		for (uint8_t row = 0; row < MSG_VISIBLE_LINES; row++) {
+			int idx = top + (int)row;
+			if (idx < 0 || idx >= MSG_LINES || rxMessage[idx][0] == 0)
+				continue;
+			strncpy(line, rxMessage[idx], 18);
+			line[18] = 0;
+			UI_PrintStringSmallNormal(line, 1, 0, 1 + row);  // left-aligned (End=0)
+		}
 	}
 
-	UI_DrawRectangleBuffer(gFrameBuffer, 2, 36, 10, 44, true);
-	GUI_DisplaySmallest(String, 5, 38, false, true);
+	// "scrolled back" marker
+	if (gMsgScroll > 0)
+		GUI_DisplaySmallest("^", 123, 9, false, true);
 
-	memset(String, 0, sizeof(String));
-	sprintf(String, "%s_", cMessage);
-	//UI_PrintStringSmallNormal(String, 3, 0, 6);
-	GUI_DisplaySmallest(String, 5, 48, false, true);
+	// divider above the compose line (page 5 / y40)
+	UI_DrawLineDottedBuffer(gFrameBuffer, 0, 40, 127, 40, true);
+
+	// keyboard-type indicator (B / b / 2)
+	{
+		const char *kb = (keyboardType == NUMERIC) ? "2" :
+		                 (keyboardType == UPPERCASE) ? "B" : "b";
+		GUI_DisplaySmallest(kb, 3, 50, false, true);
+	}
+
+	// compose line (page 6), showing the tail so the cursor stays in view
+	{
+		char inp[20];
+		size_t L = strlen(cMessage);
+		const char *src = (L > 17) ? cMessage + (L - 17) : cMessage;
+		snprintf(inp, sizeof(inp), "%s_", src);
+		UI_PrintStringSmallNormal(inp, 12, 0, 6);  // left-aligned (End=0)
+	}
 
 	ST7565_BlitFullScreen();
 }

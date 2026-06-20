@@ -1605,6 +1605,13 @@ void APP_TimeSlice10ms(void)
 
     gFlashLightBlinkCounter++;
 
+#ifdef ENABLE_MESSENGER
+    // T9 inter-character timeout: without this tick keyTickCounter never grows,
+    // so the "wait, then press the same key for the next letter" never works
+    // (omitted in the original K1 port; present in kamilsss655 APP_TimeSlice10ms)
+    keyTickCounter++;
+#endif
+
 #ifdef ENABLE_AM_FIX
     if (gRxVfo->Modulation == MODULATION_AM) {
         AM_fix_10ms(gEeprom.RX_VFO);

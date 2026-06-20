@@ -317,6 +317,10 @@ typedef struct {
 #endif
 #ifdef ENABLE_MESSENGER
     MessengerConfig       MESSENGER_CONFIG;
+    // station callsign auto-prepended to outgoing messages for ID compliance
+    // (6 chars callsign + 2 chars radio id, e.g. "IU2VTM01"); set via CHIRP or
+    // the radio menu, stored at EEPROM 0xA170
+    char                  CALLSIGN[8];
 #endif
 #ifdef ENABLE_ENCRYPTION
     char                  ENC_KEY[16];
@@ -362,6 +366,9 @@ void SETTINGS_SaveChannel(uint16_t Channel, uint8_t VFO, const VFO_Info_t *pVFO,
 void SETTINGS_SaveBatteryCalibration(const uint16_t * batteryCalibration);
 void SETTINGS_UpdateChannel(uint16_t channel, const VFO_Info_t *pVFO, bool keep, bool check, bool save);
 void SETTINGS_WriteBuildOptions(void);
+#ifdef ENABLE_MESSENGER
+void SETTINGS_SaveCallsign(void);
+#endif
 #ifdef ENABLE_FEAT_F4HWN_RESUME_STATE
     void SETTINGS_WriteCurrentState(void);
 #endif

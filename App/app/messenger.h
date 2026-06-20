@@ -42,9 +42,13 @@ typedef enum KeyboardType {
 extern KeyboardType keyboardType;
 extern uint16_t gErrorsDuringMSG;
 extern char cMessage[PAYLOAD_LENGTH];
-extern char rxMessage[4][PAYLOAD_LENGTH + 2];
+#define MSG_LINES 8           // message history depth (newest at MSG_LINES-1)
+#define MSG_VISIBLE_LINES 4   // history lines shown at once (bigger font)
+extern char rxMessage[MSG_LINES][PAYLOAD_LENGTH + 2];
 extern uint8_t hasNewMessage;
 extern uint8_t keyTickCounter;
+extern uint8_t gMsgScroll;   // history scroll offset (0 = newest at bottom)
+extern bool gMsgEditCallsign; // true while editing the callsign on-radio (F+SIDE2)
 
 typedef enum MsgStatus {
     READY,
@@ -58,6 +62,8 @@ typedef enum PacketType {
     MESSAGE_PACKET = 100u,
     ENCRYPTED_MESSAGE_PACKET,
     ACK_PACKET,
+    PING_PACKET,   // range-check probe (K1<->K1; a kamilsss655 K5 sees this as
+    PONG_PACKET,   // >= its INVALID_PACKET and ignores it -> graceful degrade)
     INVALID_PACKET
 } PacketType;
 
@@ -104,6 +110,7 @@ void MSG_SendPacket();
 void MSG_FSKSendData();
 void MSG_ClearPacketBuffer();
 void MSG_SendAck();
+void MSG_SendPing();   // range-check: broadcast a PING, others reply PONG
 void MSG_HandleReceive();
 void MSG_Send(const char *cMessage);
 void MSG_ConfigureFSK(bool rx);

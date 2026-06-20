@@ -444,6 +444,10 @@ gEeprom.FreqChannel[1]   = IS_FREQ_CHANNEL(Data16[5]) ? Data16[5] : (FREQ_CHANNE
     // challenge command is compiled out) for the messenger encryption key
     PY25Q16_ReadBuffer(0x00A138, gEeprom.ENC_KEY, sizeof(gEeprom.ENC_KEY));
 #endif
+#ifdef ENABLE_MESSENGER
+    // station callsign auto-prepended to messages for ID (8 bytes at 0xA170)
+    PY25Q16_ReadBuffer(0x00A170, gEeprom.CALLSIGN, sizeof(gEeprom.CALLSIGN));
+#endif
     #ifndef ENABLE_FEAT_F4HWN
         for (unsigned int i = 0; i < ARRAY_SIZE(gCustomAesKey); i++)
         {
@@ -816,6 +820,15 @@ void SETTINGS_FactoryReset(bool bIsAll)
         SETTINGS_SaveVfoIndicesFlush();
     #endif
 }
+
+#ifdef ENABLE_MESSENGER
+void SETTINGS_SaveCallsign(void)
+{
+    // persist the 8-byte station callsign at EEPROM 0xA170 (sector
+    // read-modify-write keeps the surrounding settings intact)
+    PY25Q16_WriteBuffer(0x00A170, gEeprom.CALLSIGN, sizeof(gEeprom.CALLSIGN), false);
+}
+#endif
 
 #ifdef ENABLE_FMRADIO
 void SETTINGS_SaveFM(void)

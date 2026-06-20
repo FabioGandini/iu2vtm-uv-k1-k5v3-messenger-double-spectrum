@@ -61,7 +61,7 @@ unsigned char numberOfNumsAssignedToKey[9] = { 1, 1, 1, 1, 1, 1, 1, 1, 1 };
 
 char cMessage[PAYLOAD_LENGTH];
 char lastcMessage[PAYLOAD_LENGTH];
-char rxMessage[4][PAYLOAD_LENGTH + 2];
+char rxMessage[MSG_LINES][PAYLOAD_LENGTH + 2];
 unsigned char cIndex = 0;
 unsigned char prevKey = 0, prevLetter = 0;
 KeyboardType keyboardType = UPPERCASE;
@@ -82,9 +82,126 @@ uint8_t gMsgRxTimeout10ms;
 // the received message is drawn before the radio keys up for the reply
 uint8_t gMsgAckCountdown10ms;
 
+// range check: deferred PONG reply (armed on PING RX, with random jitter so
+// multiple radios don't all answer at once) and the RSSI of the last packet
+uint8_t gMsgPongCountdown10ms;
+static int16_t gMsgLastRxRssiDbm;
+static void MSG_SendPong(void);
+
 uint8_t hasNewMessage = 0;
 
 uint8_t keyTickCounter = 0;
+
+// message-history scroll offset: 0 shows the newest lines at the bottom,
+// higher values scroll back into older history (UP/DOWN in the messenger)
+uint8_t gMsgScroll = 0;
+
+// true while editing the station callsign on-radio (F+SIDE2), reusing the T9
+// message-input machinery instead of composing a message
+bool gMsgEditCallsign = false;
+
+// Build the "CALLSIGN:" prefix auto-prepended to outgoing messages for ID
+// compliance. Sanitizes the EEPROM callsign (printable ASCII only, up to 8
+// chars; erased flash 0xFF or NUL ends it). Returns prefix length (0 if no
+// callsign set). dst must hold at least sizeof(CALLSIGN)+2 bytes.
+static uint8_t MSG_BuildCallPrefix(char *dst) {
+	uint8_t n = 0;
+	for (uint8_t i = 0; i < sizeof(gEeprom.CALLSIGN); i++) {
+		char c = gEeprom.CALLSIGN[i];
+		if (c == 0 || (uint8_t)c == 0xFF || c < 0x20 || c > 0x7E)
+			break;
+		dst[n++] = c;
+	}
+	if (n > 0)
+		dst[n++] = ':';
+	dst[n] = 0;
+	return n;
+}
+
+// Max characters the user may type, leaving room for the callsign prefix so
+// prefix + text still fit in PAYLOAD_LENGTH.
+static uint8_t MSG_MsgInputMax(void) {
+	if (gMsgEditCallsign)
+		return sizeof(gEeprom.CALLSIGN);  // editing callsign: up to 8 chars
+	char tmp[sizeof(gEeprom.CALLSIGN) + 2];
+	uint8_t p = MSG_BuildCallPrefix(tmp);
+	return (MAX_MSG_LENGTH > p) ? (uint8_t)(MAX_MSG_LENGTH - p) : 1;
+}
+
+// --- on-radio callsign editor (F+SIDE2), reuses the T9 message input ---
+
+static void MSG_EnterCallsignEdit(void) {
+	uint8_t n = 0;
+	memset(cMessage, 0, sizeof(cMessage));
+	for (uint8_t i = 0; i < sizeof(gEeprom.CALLSIGN); i++) {
+		char c = gEeprom.CALLSIGN[i];
+		if (c == 0 || (uint8_t)c == 0xFF || c < 0x20 || c > 0x7E)
+			break;
+		cMessage[n++] = c;
+	}
+	cIndex = n;
+	prevKey = 0;
+	prevLetter = 0;
+	gMsgEditCallsign = true;
+}
+
+static void MSG_ExitCallsignEdit(void) {
+	gMsgEditCallsign = false;
+	memset(cMessage, 0, sizeof(cMessage));
+	cIndex = 0;
+	prevKey = 0;
+	prevLetter = 0;
+}
+
+static void MSG_SaveCallsignEdit(void) {
+	// store the typed callsign into the EEPROM field (NUL-padded; empty clears
+	// it), persist, then leave edit mode
+	memset(gEeprom.CALLSIGN, 0, sizeof(gEeprom.CALLSIGN));
+	for (uint8_t i = 0; i < sizeof(gEeprom.CALLSIGN) && cMessage[i]; i++)
+		gEeprom.CALLSIGN[i] = cMessage[i];
+	SETTINGS_SaveCallsign();
+	MSG_ExitCallsignEdit();
+}
+
+// Rough RSSI -> distance estimate (log-distance path-loss model, integer math,
+// no libm). VERY approximate: ignores TX power/antenna/terrain/obstacles. Two
+// knobs to calibrate against real field measurements:
+//   MSG_DIST_REF_RSSI : the RSSI (dBm) you read at MSG_DIST_REF_M
+//   MSG_DIST_DB_PER_2X: dB of extra path loss per doubling of distance
+//                       (~6 = free space n=2, ~9 = n=3, ~12 = n=4 obstructed)
+#define MSG_DIST_REF_RSSI   (-95)
+#define MSG_DIST_REF_M      (1000)
+#define MSG_DIST_DB_PER_2X  (9)
+
+static uint16_t MSG_EstimateDistanceM(int16_t rssi_dbm) {
+	// distance = REF_M * 2^((REF_RSSI - rssi) / DB_PER_2X)
+	int32_t excess = (int32_t)MSG_DIST_REF_RSSI - rssi_dbm;  // dB beyond reference
+	int32_t whole  = excess / MSG_DIST_DB_PER_2X;            // integer doublings
+	int32_t frac   = excess - whole * MSG_DIST_DB_PER_2X;
+	if (frac < 0) { frac += MSG_DIST_DB_PER_2X; whole -= 1; } // floor toward -inf
+	int32_t m = MSG_DIST_REF_M;
+	if (whole >= 0) {
+		if (whole > 8) whole = 8;     // clamp before shifting
+		m <<= whole;
+	} else {
+		if (whole < -10) whole = -10;
+		m >>= (-whole);
+	}
+	// fractional doubling, linearly interpolated 1.0..2.0 over the remainder
+	m += (int32_t)((int64_t)m * frac / MSG_DIST_DB_PER_2X);
+	if (m < 0) m = 0;
+	if (m > 99000) m = 99000;         // clamp ~99 km
+	return (uint16_t)m;
+}
+
+// Format the estimate as "320m" or "1.5km" into dst (>=8 bytes)
+static void MSG_FormatDistance(char *dst, uint8_t dstSize, int16_t rssi_dbm) {
+	uint16_t m = MSG_EstimateDistanceM(rssi_dbm);
+	if (m < 1000)
+		snprintf(dst, dstSize, "%um", m);
+	else
+		snprintf(dst, dstSize, "%u.%ukm", m / 1000, (m % 1000) / 100);
+}
 
 // -----------------------------------------------------
 
@@ -207,13 +324,15 @@ void MSG_EnableRX(const bool enable) {
 // -----------------------------------------------------
 
 void moveUP(char (*rxMessages)[PAYLOAD_LENGTH + 2]) {
-    // Shift existing lines up
-    strcpy(rxMessages[0], rxMessages[1]);
-	strcpy(rxMessages[1], rxMessages[2]);
-	strcpy(rxMessages[2], rxMessages[3]);
+    // Shift existing lines up through the whole history buffer
+    for (uint8_t i = 0; i < MSG_LINES - 1; i++)
+        strcpy(rxMessages[i], rxMessages[i + 1]);
 
-    // Insert the new line at the last position
-	memset(rxMessages[3], 0, sizeof(rxMessages[3]));
+    // Insert the new line at the last (newest) position
+    memset(rxMessages[MSG_LINES - 1], 0, sizeof(rxMessages[MSG_LINES - 1]));
+
+    // a new line arrived: jump the view back to the newest
+    gMsgScroll = 0;
 }
 
 void MSG_SendPacket() {
@@ -235,10 +354,11 @@ void MSG_SendPacket() {
 		BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, false);
 		BK4819_ToggleGpioOut(BK4819_GPIO5_PIN1_RED, true);
 
-		// display sent message (before encryption)
-		if (dataPacket.data.header != ACK_PACKET) {
+		// display sent message (before encryption); only for real messages,
+		// not ACK/PING/PONG control packets
+		if (dataPacket.data.header == MESSAGE_PACKET || dataPacket.data.header == ENCRYPTED_MESSAGE_PACKET) {
 			moveUP(rxMessage);
-			sprintf(rxMessage[3], "> %s", dataPacket.data.payload);
+			sprintf(rxMessage[MSG_LINES - 1], "> %s", dataPacket.data.payload);
 			memset(lastcMessage, 0, sizeof(lastcMessage));
 			memcpy(lastcMessage, dataPacket.data.payload, PAYLOAD_LENGTH);
 			cIndex = 0;
@@ -345,6 +465,9 @@ void MSG_StorePacket(const uint16_t interrupt_bits) {
 	}
 
 	if (rx_finished) {
+		// snapshot the signal strength of the packet just received (used by
+		// the range-check PONG display)
+		gMsgLastRxRssiDbm = BK4819_GetRSSI_dBm();
 		// turn off green LED
 		BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, 0);
 		g_SquelchLost = false;
@@ -367,6 +490,10 @@ void MSG_CheckRxTimeout(void) {
 	// deferred ACK transmission (see MSG_HandleReceive)
 	if (gMsgAckCountdown10ms && --gMsgAckCountdown10ms == 0)
 		MSG_SendAck();
+
+	// deferred PONG reply to a range-check PING (jittered to avoid collisions)
+	if (gMsgPongCountdown10ms && --gMsgPongCountdown10ms == 0)
+		MSG_SendPong();
 
 	// BK4829 quirk: many code paths (squelch setup, beeps, tones) leave the
 	// AF path on AF_MUTE, which also silences the FM demod feeding the FSK
@@ -465,20 +592,82 @@ void MSG_SendAck() {
 	MSG_SendPacket();
 }
 
+// fill the packet payload with our (sanitized) callsign so PING/PONG peers can
+// identify us; placeholder '?' if no callsign is set (payload must be non-empty)
+static void MSG_FillCallsignPayload(void) {
+	uint8_t n = 0;
+	for (uint8_t i = 0; i < sizeof(gEeprom.CALLSIGN); i++) {
+		char c = gEeprom.CALLSIGN[i];
+		if (c == 0 || (uint8_t)c == 0xFF || c < 0x20 || c > 0x7E)
+			break;
+		dataPacket.data.payload[n++] = c;
+	}
+	if (n == 0)
+		dataPacket.data.payload[n++] = '?';
+}
+
+void MSG_SendPing(void) {
+	// broadcast a range-check probe; nearby iu2vtm radios reply with a PONG
+	MSG_ClearPacketBuffer();
+	dataPacket.data.header = PING_PACKET;
+	MSG_FillCallsignPayload();
+	moveUP(rxMessage);
+	snprintf(rxMessage[MSG_LINES - 1], PAYLOAD_LENGTH + 2, "PING >");
+	gUpdateDisplay = true;
+	MSG_SendPacket();
+}
+
+static void MSG_SendPong(void) {
+	// reply to a received PING with our callsign
+	MSG_ClearPacketBuffer();
+	dataPacket.data.header = PONG_PACKET;
+	MSG_FillCallsignPayload();
+	MSG_SendPacket();
+}
+
 void MSG_HandleReceive(){
 	if (dataPacket.data.header == ACK_PACKET) {
 	#ifdef ENABLE_MESSENGER_DELIVERY_NOTIFICATION
 		#ifdef ENABLE_MESSENGER_UART
 			UART_printf("SVC<RCPT\r\n");
 		#endif
-		rxMessage[3][0] = '+';
+		rxMessage[MSG_LINES - 1][0] = '+';
 		gUpdateStatus = true;
 		gUpdateDisplay = true;
 	#endif
+	} else if (dataPacket.data.header == PING_PACKET) {
+		// range check: someone is probing. Log who pinged, then schedule a
+		// PONG reply with random jitter so multiple radios don't all answer
+		// at the same instant.
+		moveUP(rxMessage);
+		snprintf(rxMessage[MSG_LINES - 1], PAYLOAD_LENGTH + 2, "PING< %s", dataPacket.data.payload);
+		if (gScreenToDisplay != DISPLAY_MSG) hasNewMessage = 1;
+		gUpdateStatus = true;
+		gUpdateDisplay = true;
+		{
+			static uint16_t s_rng = 0xACE1;  // xorshift jitter seed
+			s_rng ^= s_rng << 7; s_rng ^= s_rng >> 9; s_rng ^= s_rng << 8;
+			gMsgPongCountdown10ms = 50 + (s_rng % 50);  // 0.5..1.0 s
+		}
+		return;
+	} else if (dataPacket.data.header == PONG_PACKET) {
+		// a station answered our ping: show its callsign, estimated distance
+		// (rough RSSI model) and the measured RSSI
+		moveUP(rxMessage);
+		{
+			char ds[8];
+			MSG_FormatDistance(ds, sizeof(ds), gMsgLastRxRssiDbm);
+			snprintf(rxMessage[MSG_LINES - 1], PAYLOAD_LENGTH + 2, "%s %s %d",
+			         dataPacket.data.payload, ds, gMsgLastRxRssiDbm);
+		}
+		if (gScreenToDisplay != DISPLAY_MSG) hasNewMessage = 1;
+		gUpdateStatus = true;
+		gUpdateDisplay = true;
+		return;
 	} else {
 		moveUP(rxMessage);
 		if (dataPacket.data.header >= INVALID_PACKET) {
-			snprintf(rxMessage[3], PAYLOAD_LENGTH + 2, "ERROR: INVALID PACKET.");
+			snprintf(rxMessage[MSG_LINES - 1], PAYLOAD_LENGTH + 2, "ERROR: INVALID PACKET.");
 		}
 		else
 		{
@@ -492,9 +681,9 @@ void MSG_HandleReceive(){
 						gEncryptionKey,
 						256);
 				}
-				snprintf(rxMessage[3], PAYLOAD_LENGTH + 2, "< %s", dataPacket.data.payload);
+				snprintf(rxMessage[MSG_LINES - 1], PAYLOAD_LENGTH + 2, "< %s", dataPacket.data.payload);
 			#else
-				snprintf(rxMessage[3], PAYLOAD_LENGTH + 2, "< %s", dataPacket.data.payload);
+				snprintf(rxMessage[MSG_LINES - 1], PAYLOAD_LENGTH + 2, "< %s", dataPacket.data.payload);
 			#endif
 			#ifdef ENABLE_MESSENGER_UART
 				UART_printf("SMS<%s\r\n", dataPacket.data.payload);
@@ -535,7 +724,7 @@ void insertCharInMessage(uint8_t key) {
 		} else {
 			cMessage[cIndex] = ' ';
 		}
-		if ( cIndex < MAX_MSG_LENGTH ) {
+		if ( cIndex < MSG_MsgInputMax() ) {
 			cIndex++;
 		}
 	} else if (prevKey == key)
@@ -548,14 +737,14 @@ void insertCharInMessage(uint8_t key) {
 		} else {
 			cMessage[cIndex] = T9TableUp[key - 1][(++prevLetter) % numberOfLettersAssignedToKey[key - 1]];
 		}
-		if ( cIndex < MAX_MSG_LENGTH ) {
+		if ( cIndex < MSG_MsgInputMax() ) {
 			cIndex++;
 		}
 	}
 	else
 	{
 		prevLetter = 0;
-		if ( cIndex >= MAX_MSG_LENGTH ) {
+		if ( cIndex >= MSG_MsgInputMax() ) {
 			cIndex = (cIndex > 0) ? cIndex - 1 : 0;
 		}
 		if ( keyboardType == NUMERIC ) {
@@ -565,7 +754,7 @@ void insertCharInMessage(uint8_t key) {
 		} else {
 			cMessage[cIndex] = T9TableUp[key - 1][prevLetter];
 		}
-		if ( cIndex < MAX_MSG_LENGTH ) {
+		if ( cIndex < MSG_MsgInputMax() ) {
 			cIndex++;
 		}
 
@@ -617,18 +806,28 @@ void  MSG_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld) {
 				processBackspace();
 				break;
 			case KEY_UP:
-				memset(cMessage, 0, sizeof(cMessage));
-				memcpy(cMessage, lastcMessage, PAYLOAD_LENGTH);
-				cIndex = strlen(cMessage);
+				// scroll back into older history (disabled while editing callsign)
+				if (!gMsgEditCallsign && gMsgScroll < MSG_LINES - MSG_VISIBLE_LINES)
+					gMsgScroll++;
+				gUpdateDisplay = true;
 				break;
-			/*case KEY_DOWN:
-				break;*/
+			case KEY_DOWN:
+				// scroll toward the newest
+				if (!gMsgEditCallsign && gMsgScroll > 0)
+					gMsgScroll--;
+				gUpdateDisplay = true;
+				break;
 			case KEY_MENU:
-				// Send message
-				MSG_Send(cMessage);
+				if (gMsgEditCallsign)
+					MSG_SaveCallsignEdit();   // save callsign
+				else
+					MSG_Send(cMessage);       // send message
 				break;
 			case KEY_EXIT:
-				gRequestDisplayScreen = DISPLAY_MAIN;
+				if (gMsgEditCallsign)
+					MSG_ExitCallsignEdit();   // cancel callsign edit
+				else
+					gRequestDisplayScreen = DISPLAY_MAIN;
 				break;
 
 			default:
@@ -642,6 +841,16 @@ void  MSG_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld) {
 		{
 			case KEY_F:
 				MSG_Init();
+				break;
+			case KEY_UP:
+				// hold UP = send a range-check ping (tap UP = scroll)
+				if (!gMsgEditCallsign)
+					MSG_SendPing();
+				break;
+			case KEY_DOWN:
+				// hold DOWN = edit the station callsign (tap DOWN = scroll)
+				if (!gMsgEditCallsign)
+					MSG_EnterCallsignEdit();
 				break;
 			default:
 				AUDIO_PlayBeep(BEEP_500HZ_60MS_DOUBLE_BEEP_OPTIONAL);
@@ -670,7 +879,19 @@ void MSG_Send(const char *cMessage){
 	#else
 		dataPacket.data.header=MESSAGE_PACKET;
 	#endif
-	memcpy(dataPacket.data.payload, cMessage, sizeof(dataPacket.data.payload));
+	// auto-prepend the station callsign ("CALLSIGN:msg") for ID compliance;
+	// the combined string is truncated to PAYLOAD_LENGTH. Note: when the
+	// message is encrypted the callsign is encrypted too, but encryption is
+	// not permitted on amateur bands anyway (use clear text there).
+	{
+		char prefix[sizeof(gEeprom.CALLSIGN) + 2];
+		uint8_t plen = MSG_BuildCallPrefix(prefix);
+		memset(dataPacket.data.payload, 0, sizeof(dataPacket.data.payload));
+		if (plen > 0)
+			snprintf((char *)dataPacket.data.payload, sizeof(dataPacket.data.payload), "%s%s", prefix, cMessage);
+		else
+			memcpy(dataPacket.data.payload, cMessage, sizeof(dataPacket.data.payload));
+	}
 	MSG_SendPacket();
 }
 

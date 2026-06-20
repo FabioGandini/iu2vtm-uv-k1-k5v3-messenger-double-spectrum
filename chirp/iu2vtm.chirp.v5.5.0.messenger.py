@@ -299,6 +299,11 @@ struct {
 // AES key slot, unused on F4HWN firmwares
 char enc_key[16];
 
+#seekto 0x00A170;
+// messenger station callsign auto-prepended to outgoing messages for ID
+// (IU2VTM port): 6 chars callsign + 2 chars radio id, e.g. "IU2VTM01"
+char callsign[8];
+
 // --------------------
 
 #seekto 0x00A150;
@@ -1776,6 +1781,16 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
                     key = "\xff" * 16
                 _mem.enc_key = key
 
+            elif elname == "msg_callsign":
+                # 8-char station callsign auto-prepended to messages; pad short
+                # values with NUL (firmware stops at NUL), empty -> 0xFF slot
+                cs = str(element.value).strip()
+                if cs:
+                    cs = cs[:8] + "\x00" * (8 - len(cs[:8]))
+                else:
+                    cs = "\xff" * 8
+                _mem.callsign = cs
+
             # set tot f4hwn
             elif elname == "set_tot":
                 _mem.set_tot = int(element.value)
@@ -2495,6 +2510,15 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
                               'Must match the password of the other radio\n' + \
                               '(on a kamilsss655 K5 it is the EncKey menu entry).\n' + \
                               'Leave empty to reset the slot to its factory state')
+
+        callsign = str(_mem.callsign).strip("\x00\xff")
+        callsign = _getstring(callsign.encode('ascii', errors='ignore'), 0, 8)
+        val = RadioSettingValueString(0, 8, callsign)
+        MsgCallSetting = RadioSetting("msg_callsign", "Station callsign prefix (Callsign, 8 chars max)", val)
+        MsgCallSetting.set_doc('Callsign auto-prepended to every outgoing message as "CALLSIGN:msg"\n' + \
+                              'for amateur-radio ID compliance. 8 chars max\n' + \
+                              '(e.g. 6 callsign + 2 radio id: IU2VTM01).\n' + \
+                              'Leave empty to disable the prefix')
 
         # Set_Menu_Lock f4hwn
         tmpsetmenulock = list_def(_mem.set_menu_lock, SET_OFF_ON_LIST, 0)
@@ -3262,6 +3286,7 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
             basic.append(MsgModSetting)
             basic.append(MsgEncSetting)
             basic.append(MsgKeySetting)
+            basic.append(MsgCallSetting)
 
         append_label(basic,
                      "=" * 6 + " End of settings " + "=" * 300, "=" * 300)
