@@ -503,9 +503,6 @@ SET_LCK_LIST = ["KEYS", "KEYS+PTT"]
 # SET_MET SET_GUI f4hwn
 SET_MET_LIST = ["TINY", "CLASSIC"]
 
-# Messenger FSK modulation (kamilsss655 messenger port)
-MSG_MOD_LIST = ["FSK 450", "FSK 700", "AFSK 1200"]
-
 # dtmf_flags
 PTTID_LIST = ["OFF", "UP CODE", "DOWN CODE", "UP+DOWN CODE", "APOLLO QUINDAR"]
 
@@ -1766,9 +1763,6 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
             elif elname == "msg_encrypt":
                 _mem.msg_encrypt = int(element.value)
 
-            elif elname == "msg_modulation":
-                _mem.msg_modulation = int(element.value)
-
             elif elname == "msg_enc_key":
                 # match the on-radio menu format of the kamilsss655 K5
                 # firmware: 10 chars padded with '_', zero-padded to 16
@@ -2488,14 +2482,6 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
         MsgAckSetting = RadioSetting("msg_ack", "Messenger delivery ACK (MsgACK)", val)
         MsgAckSetting.set_doc('MsgACK: Automatically reply with an ACK packet when a message is received,\n' + \
                               'so the sender gets a "+" delivery confirmation')
-
-        tmpmsgmod = list_def(_mem.msg_modulation, MSG_MOD_LIST, 2)
-        val = RadioSettingValueList(MSG_MOD_LIST, MSG_MOD_LIST[tmpmsgmod])
-        MsgModSetting = RadioSetting("msg_modulation", "Messenger FSK modulation (MsgMod)", val)
-        MsgModSetting.set_doc('MsgMod: FSK modem speed, must match on both radios\n' + \
-                              '* FSK 450 : for bad conditions\n' + \
-                              '* FSK 700 : for medium conditions\n' + \
-                              '* AFSK 1200 : for good conditions')
 
         val = RadioSettingValueBoolean(_mem.msg_encrypt)
         MsgEncSetting = RadioSetting("msg_encrypt", "Encrypt outgoing messages (MsgEnc)", val)
@@ -3283,7 +3269,6 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
         if _mem.BUILD_OPTIONS.ENABLE_MESSENGER:
             basic.append(MsgRxSetting)
             basic.append(MsgAckSetting)
-            basic.append(MsgModSetting)
             basic.append(MsgEncSetting)
             basic.append(MsgKeySetting)
             basic.append(MsgCallSetting)

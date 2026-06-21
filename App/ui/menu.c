@@ -178,7 +178,6 @@ const t_menu_item MenuList[] =
 #ifdef ENABLE_MESSENGER
     {"MsgRX",       MENU_MSG_RX        },
     {"MsgACK",      MENU_MSG_ACK       },
-    {"MsgMod",      MENU_MSG_MOD       },
 #ifdef ENABLE_ENCRYPTION
     {"MsgEnc",      MENU_MSG_ENC       },
 #endif
@@ -376,15 +375,6 @@ const char* const gSubMenu_BATTYP[] =
     "1400mAh K1",
     "2500mAh K1"
 };
-
-#ifdef ENABLE_MESSENGER
-const char gSubMenu_MSG_MOD[3][9] =
-{
-    "FSK 450",
-    "FSK 700",
-    "AFSK1200",
-};
-#endif
 
 const char* const gSubMenu_SET_NAV[] =
 {
@@ -1473,9 +1463,6 @@ void UI_DisplayMenu(void)
         case MENU_MSG_ENC:
 #endif
             strcpy(String, gSubMenu_OFF_ON[gSubMenuSelection]);
-            break;
-        case MENU_MSG_MOD:
-            strcpy(String, gSubMenu_MSG_MOD[gSubMenuSelection]);
             break;
 #endif
     }

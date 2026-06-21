@@ -170,7 +170,6 @@ enum
 #ifdef ENABLE_MESSENGER
     MENU_MSG_RX,
     MENU_MSG_ACK,
-    MENU_MSG_MOD,
 #ifdef ENABLE_ENCRYPTION
     MENU_MSG_ENC,
 #endif
@@ -240,9 +239,6 @@ extern const char* const            gSubMenu_RX_TX[4];
 extern const char* const            gSubMenu_BAT_TXT[3];
 extern const char* const            gSubMenu_BATTYP[5];
 extern const char* const            gSubMenu_SET_NAV[2];
-#ifdef ENABLE_MESSENGER
-    extern const char    gSubMenu_MSG_MOD[3][9];
-#endif
 
 #ifndef ENABLE_FEAT_F4HWN
     extern const char* const        gSubMenu_SCRAMBLER[11];

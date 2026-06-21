@@ -919,8 +919,9 @@ void MSG_ConfigureFSK(bool rx)
 		( 1u <<  7) |    // 1
 		(96u <<  0));    // 96
 
-	// Tone2 = FSK baudrate                       // kamilsss655 2024
-	switch(gEeprom.MESSENGER_CONFIG.data.modulation)
+	// AFSK1200 only: FSK450/700 don't work reliably on the K1/BK4829 and were
+	// removed. The modem is always configured for AFSK1200 (Tone2 = 1200 baud).
+	switch(MOD_AFSK_1200)
 	{
 		case MOD_AFSK_1200:
 			TONE2_FREQ = 12389u;
@@ -935,7 +936,7 @@ void MSG_ConfigureFSK(bool rx)
 
 	BK4819_WriteRegister(BK4819_REG_72, TONE2_FREQ);
 	
-	switch(gEeprom.MESSENGER_CONFIG.data.modulation)
+	switch(MOD_AFSK_1200)   // AFSK1200 only (FSK450/700 removed)
 	{
 		case MOD_FSK_700:
 		case MOD_FSK_450:

@@ -503,9 +503,6 @@ int MENU_GetLimits(uint8_t menu_id, int32_t *pMin, int32_t *pMax)
 #endif
             *pMax = 1;
             break;
-        case MENU_MSG_MOD:
-            *pMax = 2;
-            break;
 #endif
 
         default:
@@ -1072,9 +1069,6 @@ void MENU_AcceptSetting(void)
         case MENU_MSG_ACK:
             gEeprom.MESSENGER_CONFIG.data.ack = gSubMenuSelection;
             break;
-        case MENU_MSG_MOD:
-            gEeprom.MESSENGER_CONFIG.data.modulation = gSubMenuSelection;
-            break;
 #ifdef ENABLE_ENCRYPTION
         case MENU_MSG_ENC:
             gEeprom.MESSENGER_CONFIG.data.encrypt = gSubMenuSelection;
@@ -1559,9 +1553,6 @@ void MENU_ShowCurrentSetting(void)
             break;
         case MENU_MSG_ACK:
             gSubMenuSelection = gEeprom.MESSENGER_CONFIG.data.ack;
-            break;
-        case MENU_MSG_MOD:
-            gSubMenuSelection = gEeprom.MESSENGER_CONFIG.data.modulation;
             break;
 #ifdef ENABLE_ENCRYPTION
         case MENU_MSG_ENC:
