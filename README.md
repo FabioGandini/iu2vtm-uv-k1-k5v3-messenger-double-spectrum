@@ -68,8 +68,6 @@ radio received it, your screen shows a **`+`**. Turn it on with **MsgACK**.
 air. This feature automatically sticks your callsign in front of every message,
 so a message becomes `IU2VTM01:hello`.
 
-- The callsign is up to **8 characters** (e.g. 6 for your callsign + 2 to tell
-  your radios apart: `IU2VTM01`, `IU2VTM02`...).
 - **Set it on the radio:** in the Messenger screen, **hold DOWN** → the title
   changes to "Set Callsign" → type it → **MENU** to save (**EXIT** cancels). It
   is remembered after a reboot.
