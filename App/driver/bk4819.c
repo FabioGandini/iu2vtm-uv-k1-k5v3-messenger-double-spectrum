@@ -411,6 +411,11 @@ void BK4819_ToggleGpioOut(BK4819_GPIO_PIN_t Pin, bool bSet)
     BK4819_WriteRegister(BK4819_REG_33, gBK4819_GpioOutState);
 }
 
+bool BK4819_IsGpioOutSet(BK4819_GPIO_PIN_t Pin)
+{
+    return (gBK4819_GpioOutState & (0x40u >> Pin)) != 0;
+}
+
 void BK4819_SetCDCSSCodeWord(uint32_t CodeWord)
 {
     // REG_51

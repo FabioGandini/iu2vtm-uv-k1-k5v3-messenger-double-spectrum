@@ -20,6 +20,7 @@
 #include "misc.h"
 #include "driver/vcp.h"
 #include "driver/keyboard.h"
+#include "driver/bk4819.h"
 
 // SRAM optimization: minimize static allocations
 // - previousHash: one fingerprint per 8-byte chunk instead of a full
@@ -76,7 +77,29 @@ enum {
     SCREENSHOT_CHUNK_SIZE = 8,
     SCREENSHOT_CHUNKS_PER_LINE = 16,
     SCREENSHOT_HALF_LINE_COLUMNS = LCD_WIDTH / 2,
+    SCREENSHOT_MARKER_BASE = 0xF0,
+    SCREENSHOT_FLAG_DEEP_SLEEP = 1 << 0,
+    SCREENSHOT_FLAG_LED_RED = 1 << 1,
+    SCREENSHOT_FLAG_LED_GREEN = 1 << 2,
 };
+
+static uint8_t SCREENSHOT_StateFlags(void)
+{
+    uint8_t flags = 0;
+
+#ifdef ENABLE_FEAT_F4HWN_SLEEP
+    if (gWakeUp)
+        flags |= SCREENSHOT_FLAG_DEEP_SLEEP;
+#endif
+
+    if (BK4819_IsGpioOutSet(BK4819_GPIO5_PIN1_RED))
+        flags |= SCREENSHOT_FLAG_LED_RED;
+
+    if (BK4819_IsGpioOutSet(BK4819_GPIO6_PIN2_GREEN))
+        flags |= SCREENSHOT_FLAG_LED_GREEN;
+
+    return flags;
+}
 
 // Compute one 8-byte output chunk directly from the display buffers.
 // Frame layout: per line (status + 7 frame lines), 8 bit layers of
@@ -149,10 +172,9 @@ void SCREENSHOT_Update(bool force)
     if (gKeyReading0 != KEY_INVALID)
         return;
 
-    // ==== Send version marker (for backward compatibility detection) ====
-    // New format: sends 0xFF before header
-    // Old format: doesn't exist, so viewers can differentiate
-    uint8_t versionMarker = 0xFF;
+    // ==== Send version marker and state flags ====
+    // 0xF0 keeps a resync-safe marker before the standard AA 55 header.
+    uint8_t versionMarker = SCREENSHOT_MARKER_BASE | SCREENSHOT_StateFlags();
     SCREENSHOT_Send(&versionMarker, 1);
 
     // ==== Send header ====

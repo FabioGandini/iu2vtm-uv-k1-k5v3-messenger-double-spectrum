@@ -77,6 +77,7 @@ void     BK4819_SetAGC(bool enable);
 void     BK4819_InitAGC(bool amModulation);
 
 void     BK4819_ToggleGpioOut(BK4819_GPIO_PIN_t Pin, bool bSet);
+bool     BK4819_IsGpioOutSet(BK4819_GPIO_PIN_t Pin);
 
 void     BK4819_SetCDCSSCodeWord(uint32_t CodeWord);
 void     BK4819_SetCTCSSFrequency(uint32_t BaudRate);
