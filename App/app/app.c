@@ -994,9 +994,11 @@ static void CheckRadioInterrupts(void)
         if (interrupts.sqlLost) {
             g_SquelchLost = true;
             BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, true);
-            #ifdef ENABLE_FEAT_F4HWN_RX_TX_TIMER
-                gRxTimerCountdown_500ms = 7200;
-            #endif
+            // NB: do NOT reset gRxTimerCountdown_500ms here. On the BK4829 sqlLost
+            // is level-triggered (see loopGuard note above) and re-fires every poll
+            // while the squelch is open, which would pin the RX timer at 00:00 for
+            // the whole RX. APP_StartListening() already seeds it to 7200 at the
+            // start of each RX, so the timer counts up correctly without this reset.
         }
 
         if (interrupts.sqlFound) {
