@@ -308,6 +308,25 @@ void MSG_EnableRX(const bool enable) {
 			BK4819_Idle();
 			BK4819_RX_TurnOn();
 			BK4819_FskEnableRx();
+
+			// Force a true AGC re-init, bypassing RADIO_SetupAGC()'s static
+			// `lastSettings` cache (which no-ops on an FM->FM retune, i.e. on
+			// every channel change and every end-of-RX). Root cause of the
+			// "stuck in RX, only power-cycle recovers" bug on the BK4829: with
+			// messenger RX the AGC drifts its gain up on noise after a strong
+			// signal until the RSSI sits above the squelch threshold; sqlLost
+			// is level-triggered (see CheckRadioInterrupts loopGuard), so it
+			// keeps re-asserting and the squelch latches open. RADIO_SetupAGC
+			// would normally re-arm the AGC, but its cache skips it whenever
+			// the modulation is unchanged - which is why changing channel did
+			// NOT recover. RADIO_SetupRegisters() runs at the end of every RX
+			// and on every channel change and calls us here, so resetting the
+			// AGC to the stock profile at this point closes the drifted-open
+			// squelch deterministically (the SetAGC false->true toggle forces
+			// InitAGC to actually run past SetAGC's own no-change guard).
+			BK4819_SetAGC(false);
+			BK4819_InitAGC(false);
+			BK4819_SetAGC(true);
 			// GOGUFW-principle change: do NOT force AF=FM here. The FSK
 			// slicer is fed by the FM demodulator regardless of the AF
 			// output routing (REG_47), so RX works with the AF path left
