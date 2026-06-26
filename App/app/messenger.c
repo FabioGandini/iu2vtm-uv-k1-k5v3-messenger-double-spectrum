@@ -298,6 +298,23 @@ void MSG_FSKSendData() {
 void MSG_EnableRX(const bool enable) {
 
 	if (enable) {
+		// Fully reset the FSK engine before reconfiguring it. REG_59 (FSK
+		// control: RX/TX enable, FIFO-clear, scramble bits) is only ever OR'd
+		// into elsewhere - FskEnableRx() sets bit12, FskClearFifo() sets
+		// bit15|bit14 - and never written back to 0, so the engine state
+		// accumulates and is never reset short of a REG_00 soft-reset (i.e. a
+		// power-cycle). After demodulating a real signal that residual FSK
+		// state keeps the BK4829 RX/demod path engaged on noise, which is what
+		// latches the squelch open ("stuck in RX, recovers only on power-cycle",
+		// survives channel/VFO change). Since RADIO_SetupRegisters() calls us on
+		// every channel change and at the end of every RX, clearing REG_58/59 to
+		// zero here re-arms the FSK engine from a clean state each time and
+		// recovers the latch deterministically - without the heavier full-chip
+		// BK4819_Init(). The AGC is exonerated: the messenger re-inits the AGC
+		// table MORE than a normal RX (extra InitAGC below) yet still sticks.
+		BK4819_WriteRegister(BK4819_REG_58, 0);
+		BK4819_WriteRegister(BK4819_REG_59, 0);
+
 		MSG_ConfigureFSK(true);
 
 		if(gEeprom.MESSENGER_CONFIG.data.receive) {
