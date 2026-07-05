@@ -870,12 +870,6 @@ void RXTX_LOG_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
         gUpdateDisplay = true;
         break;
 
-    case KEY_STAR:
-        if (!bKeyHeld && bKeyPressed) {
-            RXTX_LOG_NextFilter();
-        }
-        break;
-
     case KEY_MENU:
         if (bKeyHeld) {
             if (bKeyPressed && !gMenuClearHandled) {
