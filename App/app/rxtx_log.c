@@ -536,6 +536,7 @@ void RXTX_LOG_Init(void)
 {
     uint32_t maxSequence = 0;
     uint32_t maxAddress = RXTX_LOG_FLASH_BASE;
+    uint8_t lastEntryFlags = 0;
     bool found = false;
 
     gLogCursor        = 0;
@@ -562,6 +563,7 @@ void RXTX_LOG_Init(void)
             found = true;
             maxSequence = flashEntry.sequence;
             maxAddress = address;
+            lastEntryFlags = flashEntry.flags;
         }
     }
 
@@ -574,7 +576,10 @@ void RXTX_LOG_Init(void)
         gNextSequence = 0;
     }
 
-    RXTX_LOG_WriteSessionMarker();
+    // Skip the marker if the log already ends with one (e.g. repeated
+    // reboots with no RX/TX in between) to avoid stacking empty separators.
+    if (!found || (lastEntryFlags & RXTX_LOG_FLAG_SESSION) == 0)
+        RXTX_LOG_WriteSessionMarker();
 }
 
 void RXTX_LOG_BeginRx(const VFO_Info_t *vfo, FUNCTION_Type_t function)
