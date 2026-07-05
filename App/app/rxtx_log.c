@@ -471,6 +471,18 @@ static void RXTX_LOG_StepViewCacheScan(void)
 #endif
 
         RXTX_LOG_StopViewScan();
+
+#ifndef ENABLE_FEAT_F4HWN_RXTX_LOG_WRAP
+        // A jump-to-end aims past the last row on purpose: when the whole
+        // scan was spent skipping, the leftover skip locates the actual
+        // last row, so retarget the view there.
+        if (gViewCacheCount == 0 &&
+            gViewScanSkip > 0 &&
+            gViewScanSkip < gViewCacheStart) {
+            RXTX_LOG_StartCursorView((uint16_t)(gViewCacheStart - gViewScanSkip - 1u));
+            return;
+        }
+#endif
     }
 
 #ifdef ENABLE_FEAT_F4HWN_RXTX_LOG_WRAP
@@ -544,6 +556,20 @@ static void RXTX_LOG_RequestWrapToLast(void)
     RXTX_LOG_StartViewCacheScan(0, false, true);
 }
 #endif
+
+static void RXTX_LOG_GoToLastRow(void)
+{
+#ifdef ENABLE_FEAT_F4HWN_RXTX_LOG_WRAP
+    if (gViewTotalKnown && gViewTotalRows > 1u)
+        RXTX_LOG_StartCursorView(gViewTotalRows - 1u);
+    else
+        RXTX_LOG_RequestWrapToLast();
+#else
+    // Aim past the end; the scan-completion retarget in StepViewCacheScan
+    // snaps the cursor back to the last existing row.
+    RXTX_LOG_StartCursorView(RXTX_LOG_SLOT_COUNT - 1u);
+#endif
+}
 
 static bool RXTX_LOG_ViewCacheCovers(uint16_t indexFromNewest)
 {
@@ -834,21 +860,39 @@ void RXTX_LOG_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
     }
 
     switch (Key) {
+    case KEY_F:
+        // GENERIC_Key_F only toggles the flag on the MAIN screen, so
+        // handle it here: F arms a go-to-first/last modifier for UP/DOWN.
+        if (bKeyPressed && !bKeyHeld) {
+            gWasFKeyPressed = !gWasFKeyPressed;
+            if (gWasFKeyPressed)
+                gKeyInputCountdown = key_input_timeout_500ms;
+            gUpdateStatus = true;
+        }
+        break;
+
     case KEY_UP:
-        if (gLogCursor > 0) {
+        if (gWasFKeyPressed) {
+            HideFKeyIcon();
+            RXTX_LOG_StartCursorView(0);
+        } else if (gLogCursor > 0) {
             RXTX_LOG_StartCursorView(gLogCursor - 1u);
         }
 #ifdef ENABLE_FEAT_F4HWN_RXTX_LOG_WRAP
-        else if (gViewTotalKnown && gViewTotalRows > 1u) {
-            RXTX_LOG_StartCursorView(gViewTotalRows - 1u);
-        } else {
-            RXTX_LOG_RequestWrapToLast();
+        else {
+            RXTX_LOG_GoToLastRow();
         }
 #endif
         gUpdateDisplay = true;
         break;
 
     case KEY_DOWN:
+        if (gWasFKeyPressed) {
+            HideFKeyIcon();
+            RXTX_LOG_GoToLastRow();
+            gUpdateDisplay = true;
+            break;
+        }
 #ifdef ENABLE_FEAT_F4HWN_RXTX_LOG_WRAP
         gViewWrapPending = false;
 #endif
