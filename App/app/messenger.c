@@ -112,6 +112,24 @@ static uint16_t MSG_Rand(void) {
 	return s_msgRng;
 }
 
+// Jitter + listen-before-talk still leave a blind window: between a
+// replier's countdown expiring and its carrier actually appearing on air
+// there are ~100-150ms of TX spin-up, and a second replier whose countdown
+// expires inside that window sees a free channel and keys up too (~10% per
+// pair over the 2.5s window - observed in the field as "one of two PONGs
+// randomly missing"). The robust ALOHA answer is retransmission: every
+// replier sends its PONG TWICE with independent jitter, dropping the
+// both-lost probability to ~1%. The receiver dedups by callsign within an
+// 8s window so the duplicate is not displayed.
+static bool gMsgPongRepeatDone;
+// per-station dedup table (a single last-seen entry would fail on
+// interleaved replies: A1 B1 A2 would re-display A2)
+#define PONG_DEDUP_SLOTS 4
+#define PONG_DEDUP_TICKS 800  // 8s window
+static char     sPongDedupCall[PONG_DEDUP_SLOTS][9];
+static uint16_t sPongDedupAge10ms[PONG_DEDUP_SLOTS] = {
+	PONG_DEDUP_TICKS, PONG_DEDUP_TICKS, PONG_DEDUP_TICKS, PONG_DEDUP_TICKS };
+
 uint8_t hasNewMessage = 0;
 
 uint8_t keyTickCounter = 0;
@@ -624,11 +642,22 @@ void MSG_CheckRxTimeout(void) {
 	}
 
 	if (gMsgPongCountdown10ms && --gMsgPongCountdown10ms == 0) {
-		if (g_SquelchLost)
+		if (g_SquelchLost) {
 			gMsgPongCountdown10ms = 30 + MSG_Rand() % 120;  // busy: retry in 0.3..1.5s
-		else
+		} else {
 			MSG_SendPong();
+			if (!gMsgPongRepeatDone) {
+				// schedule the second copy (see sPongDedupCall note above)
+				gMsgPongRepeatDone = true;
+				gMsgPongCountdown10ms = 50 + MSG_Rand() % 150;  // 0.5..2.0s
+			}
+		}
 	}
+
+	// age the PONG dedup windows
+	for (uint8_t i = 0; i < PONG_DEDUP_SLOTS; i++)
+		if (sPongDedupAge10ms[i] < PONG_DEDUP_TICKS)
+			sPongDedupAge10ms[i]++;
 
 	// deferred FSK-RX arm (see gMsgRxArmPending in MSG_EnableRX): the arm was
 	// requested while a carrier was open; retry as soon as the squelch has
@@ -865,8 +894,27 @@ void MSG_HandleReceive(){
 		// window sized for the ~0.5s packet airtime (see MSG_Rand); the
 		// listen-before-talk in MSG_CheckRxTimeout handles residual overlaps
 		gMsgPongCountdown10ms = 50 + MSG_Rand() % 250;  // 0.5..3.0 s
+		gMsgPongRepeatDone = false;  // this PING gets two PONG copies
 		return;
 	} else if (dataPacket.data.header == PONG_PACKET) {
+		// double-PONG dedup: every replier transmits its PONG twice (see
+		// gMsgPongRepeatDone); show a given station only once per 8s window
+		{
+			uint8_t oldest = 0;
+			for (uint8_t i = 0; i < PONG_DEDUP_SLOTS; i++) {
+				if (sPongDedupAge10ms[i] < PONG_DEDUP_TICKS &&
+				    strncmp(sPongDedupCall[i], (const char *)dataPacket.data.payload,
+				            sizeof(sPongDedupCall[0]) - 1) == 0)
+					return;  // duplicate copy of a recently shown station
+				if (sPongDedupAge10ms[i] >= sPongDedupAge10ms[oldest])
+					oldest = i;
+			}
+			memset(sPongDedupCall[oldest], 0, sizeof(sPongDedupCall[0]));
+			strncpy(sPongDedupCall[oldest], (const char *)dataPacket.data.payload,
+			        sizeof(sPongDedupCall[0]) - 1);
+			sPongDedupAge10ms[oldest] = 0;
+		}
+
 		// a station answered our ping: show its callsign, estimated distance
 		// (rough RSSI model) and the measured RSSI
 		moveUP(rxMessage);
