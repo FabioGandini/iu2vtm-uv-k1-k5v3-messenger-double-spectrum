@@ -590,11 +590,19 @@ void MSG_CheckRxTimeout(void) {
 	}
 
 	// recovery: BK4819_REG_02's sqlLost bit is level-triggered off RSSI vs
-	// the REG_78 thresholds. If the squelch reports "open" continuously for
-	// 5s while no FSK packet is in progress, redo the same RX-chain restart
-	// a channel change does (BK4819_SetupSquelch + MSG_EnableRX). A real
-	// signal re-opens the squelch within 10ms (brief audio blip); a stuck
-	// false reading gets cleared.
+	// the REG_78 thresholds. Field testing (giu/lug 2026) proved that after
+	// a real RX the squelch can latch open INSIDE the chip: rewriting the
+	// squelch thresholds, the AGC table/mode, REG_58/59 and toggling the RX
+	// DSP - everything RADIO_SetupRegisters does, and it runs on every
+	// channel change - does NOT clear it; only the REG_00 soft-reset done
+	// at power-up does (which is why only a power-cycle recovered). So if
+	// the squelch reports "open" continuously for 5s while no FSK packet is
+	// in progress, redo the chip's boot init (BK4819_Init = REG_00 soft
+	// reset + stock register table) and then the full RX setup to re-tune
+	// and re-arm everything. During a genuine long voice RX this costs a
+	// brief audio hiccup every 5s (as the previous, weaker recovery already
+	// did); in the latched state it recovers within 5s instead of needing a
+	// power-cycle.
 	if (gEeprom.MESSENGER_CONFIG.data.receive &&
 	    gCurrentFunction != FUNCTION_TRANSMIT &&
 	    msgStatus == READY) {
@@ -602,6 +610,7 @@ void MSG_CheckRxTimeout(void) {
 		if (g_SquelchLost) {
 			if (++squelchStuck10ms >= 500) {
 				squelchStuck10ms = 0;
+				BK4819_Init();
 				RADIO_SetupRegisters(false);
 			}
 		} else {
