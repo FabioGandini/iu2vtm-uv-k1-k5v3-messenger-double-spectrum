@@ -154,6 +154,13 @@ enable_feature(ENABLE_FLASHLIGHT
 
 # ---- CUSTOM MODS ----
 
+# IOTCU Si4732 SSB-receiver hardware mod: the Si4732 replaces the BK1080 on
+# the same I2C bus/audio tap, and the FM-radio app drives it (HF AM/SSB +
+# FM broadcast). Requires ENABLE_FMRADIO for the app plumbing.
+enable_feature(ENABLE_SI4732
+    driver/si473x.c
+)
+
 enable_feature(ENABLE_SPECTRUM
     app/spectrum.c
 )

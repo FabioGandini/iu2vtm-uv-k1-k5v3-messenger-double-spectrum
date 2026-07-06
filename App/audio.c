@@ -21,6 +21,13 @@
 #include "audio.h"
 #ifdef ENABLE_FMRADIO
     #include "driver/bk1080.h"
+    #ifdef ENABLE_SI4732
+        #include "driver/si473x.h"
+        // the Si4732 replaces the BK1080 as the broadcast tuner
+        #define FM_TUNER_MUTE(x) SI47XX_SetMute(x)
+    #else
+        #define FM_TUNER_MUTE(x) BK1080_Mute(x)
+    #endif
 #endif
 #include "driver/bk4819.h"
 #include "driver/gpio.h"
@@ -72,7 +79,7 @@ void AUDIO_PlayBeep(BEEP_Type_t Beep)
 
 #ifdef ENABLE_FMRADIO
     if (gFmRadioMode)
-        BK1080_Mute(true);
+        FM_TUNER_MUTE(true);
 #endif
 
     AUDIO_AudioPathOff();
@@ -124,7 +131,7 @@ void AUDIO_PlayBeep(BEEP_Type_t Beep)
 
 #ifdef ENABLE_FMRADIO
     if (isFmRadio)
-        BK1080_Mute(false);
+        FM_TUNER_MUTE(false);
 #endif
 
     if (gCurrentFunction == FUNCTION_POWER_SAVE && gRxIdleMode)
@@ -277,7 +284,7 @@ void AUDIO_PlaySingleVoice(bool bFlag)
 
         #ifdef ENABLE_FMRADIO
             if (gFmRadioMode)
-                BK1080_Mute(true);
+                FM_TUNER_MUTE(true);
         #endif
 
         AUDIO_AudioPathOn();
@@ -301,7 +308,7 @@ void AUDIO_PlaySingleVoice(bool bFlag)
 
             #ifdef ENABLE_FMRADIO
                 if (gFmRadioMode)
-                    BK1080_Mute(false);
+                    FM_TUNER_MUTE(false);
             #endif
 
             if (!gEnableSpeaker)
@@ -442,7 +449,7 @@ void AUDIO_PlayQueuedVoice(void)
 
     #ifdef ENABLE_FMRADIO
         if (gFmRadioMode)
-            BK1080_Mute(false);
+            FM_TUNER_MUTE(false);
     #endif
 
     if (!gEnableSpeaker)

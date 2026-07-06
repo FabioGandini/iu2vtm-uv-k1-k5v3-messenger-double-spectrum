@@ -29,6 +29,41 @@ Target/preset principale: `Custom` (EXE `iu2vtm`). Autore: Fabio, IU2VTM.
   `iu2vtm_K1_FM+fix-squelch-AGC_5d33b35.bin` sono SUPERATI (storici).
 - **DA FARE: test hardware** della build `abac989` (vedi "Bug aperti").
 
+## Branch feature_si4732 — ricevitore HF/SSB (kit IOTCU, 7 lug 2026)
+
+Supporto per la mod hardware IOTCU (k1.iotcu.cn): scheda FPC con Si4732-A10
++ LNA + filtri che si salda AL POSTO del BK1080 (stesso bus I2C bit-banged
+PF5/PF6, stesso punto di iniezione audio). Preset **CustomHF**
+(`iu2vtm.hf.bin`, EDITION "KismetHF"): eredita da Custom + `ENABLE_SI4732`.
+Il preset Custom classico resta per radio non modificate (BK1080).
+
+Architettura: si riusa TUTTO il guscio dell'app FM (tasto FM, DISPLAY_FM,
+timer, hook in app.c); sotto `ENABLE_SI4732` il backend BK1080 è sostituito
+dal driver `App/driver/si473x.c` (port da fagci/k1-fw, stessa lignée I2C
+DualTachyon). Banda 0 = FM broadcast (percorsi legacy, canali/scan inclusi,
+via Si4732 in modo FM); bande 1..22 = HF (LW/MW/SW broadcast + bande ham,
+AM/LSB/USB). Il patch SSB (8840 B logici) è compilato in flash MCU in
+formato compresso pu2clr (~7,9 KB, `App/driver/si4732-patch.h`) e caricato
+da `SI47XX_PatchPowerUp()` al primo ingresso in SSB (~2 s di blocco UI).
+
+Tasti in HF: UP/DOWN tune (step), F+1 banda, F+2 step (0.1/1/5/9/10 kHz),
+F+3 modo AM→LSB→USB, MENU larghezza filtro, 5 cifre = kHz diretti (salto
+di banda automatico), F+0/EXIT esce. SSB sotto il kHz via BFO (±16 kHz).
+Persistenza: byte 4..7 liberi del record fmCfg a 0x00A024 (freq 24 bit in
+unità da 10 Hz + banda:5|modo:2). UI a font grandi (Fabio è ipovedente):
+banda+modo, frequenza in kHz a cifroni, step/BW, S-meter+SNR da RSQ_GET
+(refresh 500 ms in APP_TimeSlice500ms).
+
+Robustezza: `waitToSend()` esce subito se il chip non fa ACK (radio non
+modificata → tutte le chiamate degradano a no-op, niente hang); al boot
+`SI47XX_PowerDown()` incondizionato spegne un chip rimasto acceso dopo
+reset caldo. XOSCEN attivo (quarzo 32.768 kHz sul FPC): se il kit reale
+avesse un TCXO su RCLK andrà tolto il flag — da verificare su hardware.
+
+Build CustomHF: FLASH 92.25%, RAM 83.20%, zero warning. Custom invariato.
+**DA FARE: test su hardware con kit IOTCU montato** (tuning AM/SSB, patch
+load, audio, FM broadcast via Si4732, comportamento su radio NON modificata).
+
 ## Fix 1 — FM broadcast sparita dal build Custom
 
 **Sintomo:** l'app FM commerciale (chip BK1080) non esiste nel firmware flashato;

@@ -56,6 +56,9 @@
 #include "driver/backlight.h"
 #ifdef ENABLE_FMRADIO
     #include "driver/bk1080.h"
+    #ifdef ENABLE_SI4732
+        #include "driver/si473x.h"
+    #endif
 #endif
 #include "driver/bk4819.h"
 #include "driver/gpio.h"
@@ -717,7 +720,11 @@ void APP_StartListening(FUNCTION_Type_t function)
 
 #ifdef ENABLE_FMRADIO
     if (gFmRadioMode)
+    #ifdef ENABLE_SI4732
+        SI47XX_PowerDown();
+    #else
         BK1080_Init0();
+    #endif
 #endif
 
     // clear the other vfo's rssi level (to hide the antenna symbol)
@@ -1837,6 +1844,13 @@ void APP_TimeSlice500ms(void)
     if (gKeypadLocked > 0)
         if (--gKeypadLocked == 0)
             gUpdateDisplay = true;
+
+#if defined(ENABLE_FMRADIO) && defined(ENABLE_SI4732)
+    // live S-meter/SNR on the HF receiver screen
+    if (gFmRadioMode && HF_ACTIVE && gScreenToDisplay == DISPLAY_FM &&
+        gFM_ScanState == FM_SCAN_OFF && gInputBoxIndex == 0)
+        gUpdateDisplay = true;
+#endif
 
 #ifdef ENABLE_FEAT_F4HWN_RX_TX_TIMER
     if (gSetting_set_tmr && (gCurrentFunction == FUNCTION_TRANSMIT || FUNCTION_IsRx())) {

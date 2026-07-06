@@ -103,6 +103,15 @@
             }
         },
         {
+            "name": "CustomHF",
+            "inherits": "Custom",
+            "cacheVariables": {
+                "ENABLE_SI4732": true,
+                "EDITION_STRING": "KismetHF",
+                "TARGET": "iu2vtm.hf"
+            }
+        },
+        {
             "name": "Bandscope",
             "inherits": "default",
             "cacheVariables": {
@@ -230,6 +239,10 @@
         {
             "name": "Custom",
             "configurePreset": "Custom"
+        },
+        {
+            "name": "CustomHF",
+            "configurePreset": "CustomHF"
         },
         {
             "name": "Bandscope",

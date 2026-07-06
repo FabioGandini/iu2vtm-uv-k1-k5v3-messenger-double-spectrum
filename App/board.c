@@ -29,6 +29,9 @@
 #include "driver/backlight.h"
 #ifdef ENABLE_FMRADIO
     #include "driver/bk1080.h"
+    #ifdef ENABLE_SI4732
+        #include "driver/si473x.h"
+    #endif
 #endif
 
 #include "driver/crc.h"
@@ -185,7 +188,11 @@ void BOARD_Init(void)
     PY25Q16_Init();
     ST7565_Init();
 #ifdef ENABLE_FMRADIO
-    BK1080_Init0();
+    #ifdef ENABLE_SI4732
+        SI47XX_PowerDown(); // silence the tuner after a warm reset
+    #else
+        BK1080_Init0();
+    #endif
 #endif
 
 #if defined(ENABLE_UART) || defined(ENABLED_AIRCOPY)

@@ -25,6 +25,38 @@
 #define FM_CHANNEL_UP   0x01
 #define FM_CHANNEL_DOWN 0xFF
 
+#ifdef ENABLE_SI4732
+#include "driver/si473x.h"
+
+/* HF band plan for the Si4732. Entry 0 is the FM-broadcast pseudo band:
+ * with gHF_Band == 0 the app runs the stock FM code paths (channels, scan,
+ * 100 kHz units) just with the Si4732 as tuner instead of the BK1080. */
+typedef struct {
+    char     name[5];
+    uint32_t lo;   /* 10 Hz units */
+    uint32_t hi;   /* 10 Hz units */
+    uint8_t  mode; /* default SI47XX_MODE for the band */
+} HF_Band_t;
+
+extern const HF_Band_t gHF_Bands[];
+extern const uint8_t   gHF_BandCount;
+
+extern uint32_t gHF_Freq;      /* 10 Hz units */
+extern uint8_t  gHF_Band;      /* index into gHF_Bands, 0 = FM broadcast */
+extern uint8_t  gHF_Mode;      /* SI47XX_MODE while on an HF band */
+extern uint8_t  gHF_StepIndex;
+extern uint8_t  gHF_BwIndex;
+
+#define HF_ACTIVE (gHF_Band > 0)
+
+void HF_ApplyBand(uint8_t band);
+void HF_Tune(void);
+uint32_t HF_GetStep(void);
+const char *HF_ModeName(void);
+const char *HF_StepName(void);
+const char *HF_BwName(void);
+#endif
+
 enum {
     FM_SCAN_OFF = 0U,
 };
@@ -45,6 +77,7 @@ bool    FM_CheckValidChannel(uint8_t Channel);
 // returns first valid channel starting at Channel
 uint8_t FM_FindNextChannel(uint8_t Channel, uint8_t Direction);
 int     FM_ConfigureChannelState(void);
+void    FM_SetFrequency(void);
 void    FM_TurnOff(void);
 void    FM_EraseChannels(void);
 

@@ -42,6 +42,104 @@ uint8_t           gFM_ChannelPosition;
 bool              gFM_FoundFrequency;
 uint16_t          gFM_RestoreCountdown_10ms;
 
+#ifdef ENABLE_SI4732
+
+/* frequencies in 10 Hz units (kHz * 100) */
+const HF_Band_t gHF_Bands[] = {
+    {"FM",   6400000, 10800000, SI47XX_FM},
+    {"LW",     15300,    52000, SI47XX_AM},
+    {"MW",     52200,   171000, SI47XX_AM},
+    {"120m",  230000,   249500, SI47XX_AM},
+    {"90m",   320000,   340000, SI47XX_AM},
+    {"80m",   350000,   380000, SI47XX_LSB},
+    {"60m",   475000,   506000, SI47XX_AM},
+    {"49m",   590000,   620000, SI47XX_AM},
+    {"40m",   700000,   720000, SI47XX_LSB},
+    {"41m",   720000,   745000, SI47XX_AM},
+    {"31m",   940000,   990000, SI47XX_AM},
+    {"25m",  1160000,  1210000, SI47XX_AM},
+    {"22m",  1357000,  1387000, SI47XX_AM},
+    {"20m",  1400000,  1435000, SI47XX_USB},
+    {"19m",  1510000,  1583000, SI47XX_AM},
+    {"16m",  1748000,  1790000, SI47XX_AM},
+    {"17m",  1806800,  1816800, SI47XX_USB},
+    {"15m",  2100000,  2145000, SI47XX_USB},
+    {"13m",  2145000,  2185000, SI47XX_AM},
+    {"11m",  2567000,  2610000, SI47XX_AM},
+    {"CB",   2696500,  2740500, SI47XX_AM},
+    {"10m",  2800000,  2970000, SI47XX_USB},
+    {"SW",     15000,  3000000, SI47XX_AM},
+};
+const uint8_t gHF_BandCount = ARRAY_SIZE(gHF_Bands);
+
+uint32_t gHF_Freq      = 700000; /* 7000 kHz */
+uint8_t  gHF_Band      = 0;
+uint8_t  gHF_Mode      = SI47XX_AM;
+uint8_t  gHF_StepIndex = 1;
+uint8_t  gHF_BwIndex   = 0;
+
+/* per-band frequency memory for this power cycle */
+static uint32_t sHF_BandFreq[ARRAY_SIZE(gHF_Bands)];
+
+static const uint16_t sHF_Steps[] = {10, 100, 500, 900, 1000}; /* 10 Hz units */
+
+uint32_t HF_GetStep(void)
+{
+    return sHF_Steps[gHF_StepIndex % ARRAY_SIZE(sHF_Steps)];
+}
+
+void HF_Tune(void)
+{
+    SI47XX_PowerOn((SI47XX_MODE)gHF_Mode);
+    SI47XX_TuneTo(gHF_Freq);
+    if (HF_ACTIVE)
+        sHF_BandFreq[gHF_Band] = gHF_Freq;
+}
+
+const char *HF_ModeName(void)
+{
+    static const char *names[4] = {"FM", "AM", "LSB", "USB"};
+    return names[gHF_Mode & 3];
+}
+
+const char *HF_StepName(void)
+{
+    static const char *names[5] = {".1k", "1k", "5k", "9k", "10k"};
+    return names[gHF_StepIndex % 5];
+}
+
+const char *HF_BwName(void)
+{
+    if (gHF_Mode == SI47XX_LSB || gHF_Mode == SI47XX_USB) {
+        static const char *names[4] = {"3.0k", "2.2k", "1.2k", "4.0k"};
+        return names[gHF_BwIndex % 4];
+    }
+    static const char *names[4] = {"6k", "4k", "3k", "2k"};
+    return names[gHF_BwIndex % 4];
+}
+
+void HF_ApplyBand(uint8_t band)
+{
+    if (band >= gHF_BandCount)
+        band = 0;
+    gHF_Band = band;
+
+    if (!HF_ACTIVE) {
+        FM_SetFrequency(); /* back to FM broadcast, legacy state */
+        return;
+    }
+
+    const HF_Band_t *b = &gHF_Bands[band];
+    gHF_Mode    = b->mode;
+    gHF_BwIndex = 0;
+    gHF_Freq    = sHF_BandFreq[band];
+    if (gHF_Freq < b->lo || gHF_Freq > b->hi)
+        gHF_Freq = b->lo;
+    gHF_StepIndex = (gHF_Mode == SI47XX_AM) ? 2 : 1; /* 5 kHz / 1 kHz */
+    HF_Tune();
+}
+#endif
+
 
 
 const uint8_t BUTTON_STATE_PRESSED = 1 << 0;
@@ -96,7 +194,13 @@ int FM_ConfigureChannelState(void)
 
 void FM_SetFrequency(void)
 {
+#ifdef ENABLE_SI4732
+    /* FM_FrequencyPlaying is in 100 kHz units -> 10 Hz units */
+    SI47XX_PowerOn(SI47XX_FM);
+    SI47XX_TuneTo((uint32_t)gEeprom.FM_FrequencyPlaying * 10000);
+#else
     BK1080_SetFrequency(gEeprom.FM_FrequencyPlaying, gEeprom.FM_Band/*, gEeprom.FM_Space*/);
+#endif
 }
 
 void FM_TurnOff(void)
@@ -108,7 +212,11 @@ void FM_TurnOff(void)
     AUDIO_AudioPathOff();
     gEnableSpeaker = false;
 
+#ifdef ENABLE_SI4732
+    SI47XX_PowerDown();
+#else
     BK1080_Init0();
+#endif
 
     // Enable relevant LNA based on VFO frequency
     BK4819_PickRXFilterPathBasedOnFrequency(gRxVfo->freq_config_RX.Frequency);
@@ -197,6 +305,16 @@ void FM_PlayAndUpdate(void)
     FM_AudioPathOn();
 }
 
+#ifdef ENABLE_SI4732
+int FM_CheckFrequencyLock(uint16_t Frequency, uint16_t LowerLimit)
+{
+    (void)Frequency;
+    (void)LowerLimit;
+
+    RSQ_GET();
+    return (rsqStatus.resp.VALID && rsqStatus.resp.SNR >= 2) ? 0 : -1;
+}
+#else
 int FM_CheckFrequencyLock(uint16_t Frequency, uint16_t LowerLimit)
 {
     const uint16_t Test2     = BK1080_ReadRegister(BK1080_REG_07);
@@ -239,6 +357,7 @@ int FM_CheckFrequencyLock(uint16_t Frequency, uint16_t LowerLimit)
     BK1080_BaseFrequency      = Frequency;
     return 0;
 }
+#endif
 
 static void Key_DIGITS(KEY_Code_t Key, uint8_t state)
 {
@@ -268,6 +387,40 @@ static void Key_DIGITS(KEY_Code_t Key, uint8_t state)
         gKeyInputCountdown = key_input_timeout_500ms;
 
         gRequestDisplayScreen = DISPLAY_FM;
+
+#ifdef ENABLE_SI4732
+        if (HF_ACTIVE) {
+            if (gInputBoxIndex > 4) { // 5 digits: frequency in kHz
+                gInputBoxIndex = 0;
+                gKeyInputCountdown = 1;
+
+                uint32_t f = StrToUL(INPUTBOX_GetAscii()) * 100; // 10 Hz units
+
+                if (f < SI47XX_F_MIN || f > SI47XX_F_MAX) {
+                    gBeepToPlay = BEEP_500HZ_60MS_DOUBLE_BEEP_OPTIONAL;
+                    return;
+                }
+
+                if (f < gHF_Bands[gHF_Band].lo || f > gHF_Bands[gHF_Band].hi) {
+                    // hop to the (most specific) band containing f;
+                    // the trailing SW catch-all always matches
+                    for (uint8_t i = 1; i < gHF_BandCount; i++) {
+                        if (f >= gHF_Bands[i].lo && f <= gHF_Bands[i].hi) {
+                            gHF_Band    = i;
+                            gHF_Mode    = gHF_Bands[i].mode;
+                            gHF_BwIndex = 0;
+                            break;
+                        }
+                    }
+                }
+
+                gHF_Freq = f;
+                HF_Tune();
+                gRequestSaveFM = true;
+            }
+            return;
+        }
+#endif
 
         if (State == STATE_FREQ_MODE) {
             if (gInputBoxIndex == 1) {
@@ -358,16 +511,44 @@ static void Key_FUNC(KEY_Code_t Key, uint8_t state)
                 break;
 
             case KEY_1:
+#ifdef ENABLE_SI4732
+                HF_ApplyBand((uint8_t)((gHF_Band + 1) % gHF_BandCount));
+                gRequestSaveFM = true;
+#else
                 gEeprom.FM_Band++;
                 gRequestSaveFM = true;
+#endif
                 break;
 
+#ifdef ENABLE_SI4732
+            case KEY_2: // tuning step (HF bands only)
+                if (HF_ACTIVE)
+                    gHF_StepIndex = (uint8_t)((gHF_StepIndex + 1) % 5);
+                else
+                    gBeepToPlay = BEEP_500HZ_60MS_DOUBLE_BEEP_OPTIONAL;
+                break;
+#endif
             // case KEY_2:
             //  gEeprom.FM_Space = (gEeprom.FM_Space + 1) % 3;
             //  gRequestSaveFM = true;
             //  break;
 
             case KEY_3:
+#ifdef ENABLE_SI4732
+                if (HF_ACTIVE) {
+                    // AM -> LSB -> USB -> AM (SSB entry loads the patch, ~2 s)
+                    if (gHF_Mode == SI47XX_AM)
+                        gHF_Mode = SI47XX_LSB;
+                    else if (gHF_Mode == SI47XX_LSB)
+                        gHF_Mode = SI47XX_USB;
+                    else
+                        gHF_Mode = SI47XX_AM;
+                    gHF_BwIndex = 0;
+                    HF_Tune();
+                    gRequestSaveFM = true;
+                    break;
+                }
+#endif
                 gEeprom.FM_IsMrMode = !gEeprom.FM_IsMrMode;
 
                 if (!FM_ConfigureChannelState()) {
@@ -387,6 +568,12 @@ static void Key_FUNC(KEY_Code_t Key, uint8_t state)
                 break;
 
             case KEY_STAR:
+#ifdef ENABLE_SI4732
+                if (HF_ACTIVE) { // no scan on the HF bands (yet)
+                    gBeepToPlay = BEEP_500HZ_60MS_DOUBLE_BEEP_OPTIONAL;
+                    break;
+                }
+#endif
                 ACTION_Scan(autoScan);
                 break;
 
@@ -473,6 +660,24 @@ static void Key_MENU(uint8_t state)
             return;
         }
 
+#ifdef ENABLE_SI4732
+        if (HF_ACTIVE) { // cycle the RX filter bandwidth
+            gHF_BwIndex = (uint8_t)((gHF_BwIndex + 1) % 4);
+            if (gHF_Mode == SI47XX_LSB || gHF_Mode == SI47XX_USB) {
+                static const uint8_t ssbBw[4] = {
+                    SI47XX_SSB_BW_3_kHz, SI47XX_SSB_BW_2_2_kHz,
+                    SI47XX_SSB_BW_1_2_kHz, SI47XX_SSB_BW_4_kHz};
+                SI47XX_SetSsbBandwidth((SI47XX_SsbFilterBW)ssbBw[gHF_BwIndex]);
+            } else {
+                static const uint8_t amBw[4] = {
+                    SI47XX_BW_6_kHz, SI47XX_BW_4_kHz,
+                    SI47XX_BW_3_kHz, SI47XX_BW_2_kHz};
+                SI47XX_SetBandwidth((SI47XX_FilterBW)amBw[gHF_BwIndex], true);
+            }
+            return;
+        }
+#endif
+
         if (!gEeprom.FM_IsMrMode) {
             if (gAskToSave) {
                 gFM_Channels[gFM_ChannelPosition] = gEeprom.FM_FrequencyPlaying;
@@ -532,6 +737,24 @@ static void Key_UP_DOWN(uint8_t state, int8_t Step)
     if (!gEeprom.SET_NAV) {
         Step = -Step;
     }
+
+#ifdef ENABLE_SI4732
+    if (HF_ACTIVE) {
+        const HF_Band_t *b = &gHF_Bands[gHF_Band];
+        int32_t f = (int32_t)gHF_Freq + Step * (int32_t)HF_GetStep();
+
+        if (f < (int32_t)b->lo)
+            f = (int32_t)b->hi;
+        else if (f > (int32_t)b->hi)
+            f = (int32_t)b->lo;
+
+        gHF_Freq = (uint32_t)f;
+        HF_Tune();
+        gRequestSaveFM = true;
+        gRequestDisplayScreen = DISPLAY_FM;
+        return;
+    }
+#endif
 
     if (gAskToSave) {
         gRequestDisplayScreen = DISPLAY_FM;
@@ -656,7 +879,14 @@ void FM_Start(void)
     gFM_ScanState             = FM_SCAN_OFF;
     gFM_RestoreCountdown_10ms = 0;
 
+#ifdef ENABLE_SI4732
+    if (HF_ACTIVE)
+        HF_Tune();
+    else
+        FM_SetFrequency();
+#else
     BK1080_Init(gEeprom.FM_FrequencyPlaying, gEeprom.FM_Band/*, gEeprom.FM_Space*/);
+#endif
     // Disable UHF LNA, enable VHF LNA
     BK4819_PickRXFilterPathBasedOnFrequency(10320000); // 103.2 MHz < 280 MHz
 

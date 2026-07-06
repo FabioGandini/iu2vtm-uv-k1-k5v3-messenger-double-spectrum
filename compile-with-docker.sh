@@ -22,9 +22,9 @@ EXTRA_ARGS=("$@")
 # ---------------------------------------------
 # Validate preset name
 # ---------------------------------------------
-if [[ ! "$PRESET" =~ ^(Custom|Bandscope|Broadcast|Basic|RescueOps|Game|Fusion|All)$ ]]; then
+if [[ ! "$PRESET" =~ ^(Custom|CustomHF|Bandscope|Broadcast|Basic|RescueOps|Game|Fusion|All)$ ]]; then
   echo "❌ Unknown preset: '$PRESET'"
-  echo "Valid presets are: Custom, Bandscope, Broadcast, Basic, RescueOps, Game, Fusion, All"
+  echo "Valid presets are: Custom, CustomHF, Bandscope, Broadcast, Basic, RescueOps, Game, Fusion, All"
   exit 1
 fi
 
@@ -49,9 +49,12 @@ build_preset() {
   echo ""
   echo "=== 🚀 Building preset: ${preset} ==="
   echo "---------------------------------------------"
+  # allocate a TTY only when we have one (CI/agents run without)
+  local ttyflag="-i"
+  [[ -t 0 ]] && ttyflag="-it"
   docker run --rm \
     -u $(id -u):$(id -g) \
-    -it -v "$PWD":/src -w /src "$IMAGE" \
+    $ttyflag -v "$PWD":/src -w /src "$IMAGE" \
     bash -c "which arm-none-eabi-gcc && arm-none-eabi-gcc --version && \
              cmake --preset ${preset} ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} && \
              cmake --build --preset ${preset} -j"

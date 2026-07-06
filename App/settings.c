@@ -244,6 +244,30 @@ gEeprom.FreqChannel[1]   = IS_FREQ_CHANNEL(Data16[5]) ? Data16[5] : (FREQ_CHANNE
             
         gEeprom.FM_SelectedChannel = fmCfg.selChn;
         gEeprom.FM_IsMrMode        = fmCfg.isMrMode;
+
+#ifdef ENABLE_SI4732
+        {   // HF receiver state in the spare bytes 4..7 of the FM record:
+            // 24-bit frequency (10 Hz units, LE) + band:5 | mode:2 | 1 spare
+            uint8_t hf[4];
+            PY25Q16_ReadBuffer(0x00A024, hf, 4);
+
+            if (hf[3] != 0xFF) {
+                uint32_t f    = hf[0] | ((uint32_t)hf[1] << 8) | ((uint32_t)hf[2] << 16);
+                uint8_t  band = hf[3] & 0x1F;
+                uint8_t  mode = (hf[3] >> 5) & 0x03;
+
+                if (band >= gHF_BandCount)
+                    band = 0;
+                gHF_Band = band;
+                if (band > 0) {
+                    gHF_Mode = mode;
+                    gHF_Freq = (f >= gHF_Bands[band].lo && f <= gHF_Bands[band].hi)
+                                   ? f : gHF_Bands[band].lo;
+                    gHF_StepIndex = (gHF_Mode == SI47XX_AM) ? 2 : 1;
+                }
+            }
+        }
+#endif
     }
 
     // 0E40..0E67
@@ -850,6 +874,13 @@ void SETTINGS_SaveFM(void)
         fmCfg.isMrMode = gEeprom.FM_IsMrMode;
         fmCfg.band     = gEeprom.FM_Band;
         // fmCfg.space    = gEeprom.FM_Space;
+#ifdef ENABLE_SI4732
+        // HF receiver state, see the matching load in SETTINGS_InitEEPROM
+        fmCfg.__raw[4] = gHF_Freq & 0xFF;
+        fmCfg.__raw[5] = (gHF_Freq >> 8) & 0xFF;
+        fmCfg.__raw[6] = (gHF_Freq >> 16) & 0xFF;
+        fmCfg.__raw[7] = (uint8_t)((gHF_Band & 0x1F) | ((gHF_Mode & 0x03) << 5));
+#endif
         // 0E88
         PY25Q16_WriteBuffer(0x00A020, fmCfg.__raw, 8, false);
 

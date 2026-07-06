@@ -29,10 +29,61 @@
 #include "ui/inputbox.h"
 #include "ui/ui.h"
 
+#ifdef ENABLE_SI4732
+/* HF receiver screen (Si4732, band > 0). Big fonts on purpose. */
+static void UI_DisplayHF(void)
+{
+    char String[20];
+
+    UI_DisplayClear();
+
+    // rows 0-1: band + mode, big font
+    sprintf(String, "%s %s", gHF_Bands[gHF_Band].name, HF_ModeName());
+    UI_PrintString(String, 0, 127, 0, 10);
+
+    // rows 2-3: frequency in kHz, big digits
+    if (gInputBoxIndex == 0) {
+        uint32_t khz  = gHF_Freq / 100;
+        uint32_t frac = (gHF_Freq % 100) / 10;
+        sprintf(String, "%lu.%lu", (unsigned long)khz, (unsigned long)frac);
+    } else {
+        const char *ascii = INPUTBOX_GetAscii();
+        sprintf(String, "%.5s", ascii);
+    }
+    UI_DisplayFrequency(String, 64, 2, true);
+
+    // row 4: step + filter bandwidth
+    sprintf(String, "STEP %s  BW %s", HF_StepName(), HF_BwName());
+    UI_PrintStringSmallBold(String, 0, 127, 4);
+
+    // rows 5-6: S-meter + SNR, big font (rsqStatus refreshed by caller)
+    const uint8_t rssi = rsqStatus.resp.RSSI;
+    const uint8_t snr  = rsqStatus.resp.SNR;
+    if (rssi > 34) // S9 = 34 dBuV (50 ohm), 6 dB per S-unit
+        sprintf(String, "S9+%02u %2udB", rssi - 34, snr);
+    else if (rssi < 2)
+        sprintf(String, "S0 %2udB", snr);
+    else
+        sprintf(String, "S%u %2udB", (rssi + 20) / 6, snr);
+    UI_PrintString(String, 0, 127, 5, 10);
+
+    ST7565_BlitFullScreen();
+}
+#endif
+
 void UI_DisplayFM(void)
 {
     char String[16];
     char *pPrintStr = String;
+
+#ifdef ENABLE_SI4732
+    if (HF_ACTIVE) {
+        RSQ_GET();
+        UI_DisplayHF();
+        return;
+    }
+#endif
+
     UI_DisplayClear();
 
 #ifdef ENABLE_FEAT_F4HWN

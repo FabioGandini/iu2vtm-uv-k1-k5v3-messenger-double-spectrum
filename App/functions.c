@@ -25,6 +25,9 @@
 #include "driver/backlight.h"
 #if defined(ENABLE_FMRADIO)
     #include "driver/bk1080.h"
+    #ifdef ENABLE_SI4732
+        #include "driver/si473x.h"
+    #endif
 #endif
 #include "driver/bk4819.h"
 #include "driver/gpio.h"
@@ -182,7 +185,11 @@ void FUNCTION_Transmit()
 
 #if defined(ENABLE_FMRADIO)
     if (gFmRadioMode)
+    #ifdef ENABLE_SI4732
+        SI47XX_PowerDown();
+    #else
         BK1080_Init0();
+    #endif
 #endif
 
 #ifdef ENABLE_ALARM
