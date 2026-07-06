@@ -91,6 +91,7 @@
             "name": "Custom",
             "inherits": "default",
             "cacheVariables": {
+                "ENABLE_FMRADIO": true,
                 "ENABLE_SPECTRUM": true,
                 "ENABLE_SPECTRUM_K5": true,
                 "ENABLE_AIRCOPY": true,
