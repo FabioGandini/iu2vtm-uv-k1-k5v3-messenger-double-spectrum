@@ -94,10 +94,19 @@ static void MSG_SendPong(void);
 // PONG window two repliers overlapped almost every time, and the ACK had no
 // jitter at all (fixed 700ms - two radios acknowledging the same broadcast
 // keyed up in the same instant, guaranteed collision).
+//
+// The stream must differ per radio, or the jitter is useless: a fixed seed
+// makes two identical radios with the same event history draw the SAME
+// delays and collide systematically. So the callsign (unique per station)
+// is mixed in at init, and every draw stirs in the instantaneous raw RSSI,
+// whose low bits are thermal-noise entropy that differs between radios
+// even in the same room.
+static uint16_t s_msgRng = 0xACE1;
+
 static uint16_t MSG_Rand(void) {
-	static uint16_t s_rng = 0xACE1;
-	s_rng ^= s_rng << 7; s_rng ^= s_rng >> 9; s_rng ^= s_rng << 8;
-	return s_rng;
+	s_msgRng ^= BK4819_GetRSSI();
+	s_msgRng ^= s_msgRng << 7; s_msgRng ^= s_msgRng >> 9; s_msgRng ^= s_msgRng << 8;
+	return s_msgRng;
 }
 
 uint8_t hasNewMessage = 0;
@@ -717,6 +726,12 @@ void MSG_Init() {
 		// the 256-bit session key once here instead of polling a flag
 		CRYPTO_Generate256BitKey(gEeprom.ENC_KEY, gEncryptionKey, sizeof(gEeprom.ENC_KEY));
 	#endif
+	// personalize the jitter PRNG stream (see MSG_Rand): mix the station
+	// callsign into the seed so identical radios never share delay sequences
+	for (uint8_t i = 0; i < sizeof(gEeprom.CALLSIGN); i++)
+		s_msgRng = (uint16_t)(s_msgRng * 31u) + (uint8_t)gEeprom.CALLSIGN[i];
+	if (s_msgRng == 0)  // xorshift must never run on an all-zero state
+		s_msgRng = 0xACE1;
 	MSG_EnableRX(gEeprom.MESSENGER_CONFIG.data.receive);
 }
 
