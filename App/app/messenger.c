@@ -603,12 +603,23 @@ void MSG_CheckRxTimeout(void) {
 	// brief audio hiccup every 5s (as the previous, weaker recovery already
 	// did); in the latched state it recovers within 5s instead of needing a
 	// power-cycle.
+	// The counter must keep running while msgStatus == RECEIVING: in the
+	// latched state the armed FSK engine can fire phantom fskRxSync
+	// interrupts on noise, flipping msgStatus to RECEIVING for up to 1s at
+	// a time (the RX timeout below), which would starve a READY-gated
+	// counter almost indefinitely. So: count whenever the squelch reports
+	// open; fire at 5s if no FSK packet is in progress, or force at 8s
+	// regardless - after 8s of continuously-open squelch any genuine
+	// packet (~1s at AFSK1200) finished long ago, so what looks like a
+	// reception can only be the phantom kind.
 	if (gEeprom.MESSENGER_CONFIG.data.receive &&
-	    gCurrentFunction != FUNCTION_TRANSMIT &&
-	    msgStatus == READY) {
+	    gCurrentFunction != FUNCTION_TRANSMIT) {
 		static uint16_t squelchStuck10ms = 0;
 		if (g_SquelchLost) {
-			if (++squelchStuck10ms >= 500) {
+			if (squelchStuck10ms < 800)
+				squelchStuck10ms++;
+			if ((squelchStuck10ms >= 500 && msgStatus == READY) ||
+			    squelchStuck10ms >= 800) {
 				squelchStuck10ms = 0;
 				BK4819_Init();
 				RADIO_SetupRegisters(false);
