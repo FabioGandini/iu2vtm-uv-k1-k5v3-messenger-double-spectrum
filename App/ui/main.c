@@ -2197,12 +2197,19 @@ void UI_DisplayMain(void)
         }
 
         // highlight the VFO currently receiving in dual-VFO view: invert
-        // just the channel name/frequency area of its top row (white-on-
-        // black) so it stands out at a glance against the idle VFO
+        // the channel name/frequency area (white-on-black) so it stands
+        // out at a glance against the idle VFO. The area spans TWO
+        // framebuffer rows: the big frequency digits (UI_DisplayFrequency
+        // / UI_PrintString, 16px tall) cover line and line+1, and in
+        // NAME+FREQ mode the small frequency sits on line+1 below the
+        // name - inverting only the top row cut the big digits in half.
         if (!isMainOnly() && FUNCTION_IsRx() && gEeprom.RX_VFO == vfo_num && VfoState[vfo_num] == VFO_STATE_NORMAL)
         {
             for (unsigned int col = 32; col < LCD_WIDTH; col++)
-                gFrameBuffer[line][col] ^= 0xFF;
+            {
+                gFrameBuffer[line][col]     ^= 0xFF;
+                gFrameBuffer[line + 1][col] ^= 0xFF;
+            }
         }
 #endif
     }
