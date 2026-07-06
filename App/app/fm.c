@@ -522,9 +522,12 @@ static void Key_UP_DOWN(uint8_t state, int8_t Step)
         return;
     }
 
-    if (!gEeprom.SET_NAV) {
-        Step = -Step;
-    }
+    // NB: no SET_NAV re-inversion here. The call site already passes the
+    // K1-oriented direction (KEY_UP -> -1, same hardcoded mapping the main
+    // VFO screen uses in main.c); flipping it again for SET_NAV=0 (the
+    // UV-K1 default) restored the K5 orientation and made the FM tuning
+    // keys feel inverted on the K1. For SET_NAV=1 nothing changes: that
+    // path never flipped.
 
     if (gAskToSave) {
         gRequestDisplayScreen = DISPLAY_FM;

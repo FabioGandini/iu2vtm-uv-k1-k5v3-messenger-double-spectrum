@@ -33,6 +33,9 @@
 #include "frequencies.h"
 #include "driver/system.h"
 #include "app/messenger.h"
+#ifdef ENABLE_FMRADIO
+	#include "app/fm.h"
+#endif
 #include "ui/ui.h"
 #ifdef ENABLE_ENCRYPTION
 	#include "helper/crypto.h"
@@ -587,6 +590,17 @@ void MSG_StorePacket(const uint16_t interrupt_bits) {
 // FSK reception (sync detected but FSK_RX_FINISHED never arrives), which
 // otherwise leaves msgStatus == RECEIVING and the squelch open forever
 void MSG_CheckRxTimeout(void) {
+#ifdef ENABLE_FMRADIO
+	// while the broadcast FM radio is playing, the speaker is fed by the
+	// BK1080 and the audio amp GPIO is ON: forcing the BK4819 AF path open
+	// here (the idle AF=FM block below, whose "inaudible" premise assumes a
+	// muted speaker) pumps the BK4819's demod noise straight into the FM
+	// audio, and arming FSK / re-initing the AGC is pointless with the
+	// receiver parked. Leave the chip alone; RADIO_SetupRegisters re-arms
+	// the messenger when the FM radio exits.
+	if (gFmRadioMode)
+		return;
+#endif
 	// deferred ACK / PONG transmission (see MSG_HandleReceive). Listen-
 	// before-talk: if the channel is busy when the countdown expires
 	// (typically another radio's reply already in the air), re-draw a fresh
