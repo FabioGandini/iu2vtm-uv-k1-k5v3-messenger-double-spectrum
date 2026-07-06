@@ -559,8 +559,20 @@ void MSG_StorePacket(const uint16_t interrupt_bits) {
 		// software squelch state from a still-open analog signal (sqlLost only
 		// re-fires on a closed->open edge), which is the residual stuck-open
 		// seen after a real RX. GOGUFW never writes g_SquelchLost.
-		BK4819_FskClearFifo();
-		BK4819_FskEnableRx();
+		//
+		// Re-arm the FSK engine only if the channel is already free: on a
+		// real voice RX the AFSK demod fires phantom rx_finished too, and
+		// OR-writing REG_59 (ClearFifo/EnableRx) under an open carrier is
+		// exactly the FSK-chain-under-carrier manipulation that latches the
+		// BK4829 squelch (the path the rc4 arm-gating missed). When busy,
+		// defer to the pending-arm retry in MSG_CheckRxTimeout, which does a
+		// full clean bring-up once the squelch closes.
+		if (g_SquelchLost) {
+			gMsgRxArmPending = true;
+		} else {
+			BK4819_FskClearFifo();
+			BK4819_FskEnableRx();
+		}
 		msgStatus = READY;
 		gMsgRxTimeout10ms = 0;
 
@@ -685,6 +697,23 @@ void MSG_CheckRxTimeout(void) {
 			if ((squelchStuck10ms >= 500 && msgStatus == READY) ||
 			    squelchStuck10ms >= 800) {
 				squelchStuck10ms = 0;
+#ifdef ENABLE_UART
+				// diagnostic snapshot of the latched state, taken right before
+				// the re-init wipes it: log with a serial terminal (38400 8N1,
+				// Kenwood cable) to identify WHICH register actually latches
+				printf("\nSQLSTUCK 02=%04X 0C=%04X 67=%04X 7E=%04X 58=%04X 59=%04X 70=%04X 72=%04X 30=%04X 47=%04X 3F=%04X",
+				       BK4819_ReadRegister(BK4819_REG_02),
+				       BK4819_ReadRegister(BK4819_REG_0C),
+				       BK4819_ReadRegister(BK4819_REG_67),
+				       BK4819_ReadRegister(BK4819_REG_7E),
+				       BK4819_ReadRegister(BK4819_REG_58),
+				       BK4819_ReadRegister(BK4819_REG_59),
+				       BK4819_ReadRegister(BK4819_REG_70),
+				       BK4819_ReadRegister(BK4819_REG_72),
+				       BK4819_ReadRegister(BK4819_REG_30),
+				       BK4819_ReadRegister(BK4819_REG_47),
+				       BK4819_ReadRegister(BK4819_REG_3F));
+#endif
 				BK4819_Init();
 				RADIO_SetupRegisters(false);
 			}
@@ -702,8 +731,18 @@ void MSG_CheckRxTimeout(void) {
 		gMsgRxTimeout10ms = 0;
 		msgStatus = READY;
 		gFSKWriteIndex = 0;
-		BK4819_FskClearFifo();
-		BK4819_FskEnableRx();
+		// this timeout fires when a sync was detected but no packet followed -
+		// i.e. a phantom sync from a real voice/noise carrier that is still
+		// open. Re-arming the FSK engine right here would OR-write REG_59
+		// under that carrier (the latch trigger); defer to the pending-arm
+		// retry instead, which brings the engine up cleanly once the squelch
+		// closes. When the channel is already free, re-arm directly.
+		if (g_SquelchLost) {
+			gMsgRxArmPending = true;
+		} else {
+			BK4819_FskClearFifo();
+			BK4819_FskEnableRx();
+		}
 		// recovery only resets the messenger's own FSK state; the squelch flag
 		// and green LED stay owned by the hardware sqlLost/sqlFound interrupts.
 		// Forcing g_SquelchLost=false here could clear a legitimately-open
