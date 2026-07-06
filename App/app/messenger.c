@@ -344,12 +344,11 @@ void MSG_EnableRX(const bool enable) {
 			BK4819_SetAGC(false);
 			BK4819_InitAGC(false);
 			BK4819_SetAGC(true);
-			// GOGUFW-principle change: do NOT force AF=FM here. The FSK
-			// slicer is fed by the FM demodulator regardless of the AF
-			// output routing (REG_47), so RX works with the AF path left
-			// under normal squelch control. Forcing AF=FM continuously was
-			// what kept the squelch latched open after strong signals; see
-			// the longer note in MSG_CheckRxTimeout.
+			// BK4829: AF_MUTE also gates the FM demod that feeds the FSK
+			// slicer, so the modem only hears with the AF path open (this
+			// is why RX only worked with monitor on). Inaudible: the
+			// speaker amp GPIO stays off while the squelch is closed.
+			BK4819_SetAF(BK4819_AF_FM);
 		}
 	} else {
 		BK4819_WriteRegister(BK4819_REG_70, 0);
@@ -541,18 +540,74 @@ void MSG_CheckRxTimeout(void) {
 	if (gMsgPongCountdown10ms && --gMsgPongCountdown10ms == 0)
 		MSG_SendPong();
 
-	// GOGUFW-principle change (AFSK1200 kept): we no longer force AF=FM here.
-	// Holding the AF path open continuously kept the FM demod running on noise,
-	// so the BK4829's squelch/AGC never settled back to "closed" after a strong
-	// signal and the squelch latched open (seen after a repeater voice/time
-	// announcement and after loud DTMF, and it survived even a VFO change since
-	// RADIO_SetupRegisters never re-touches the AGC). GOGUFW receives FSK on the
-	// identical BK4829 without ever touching REG_47/AF, leaving the squelch to
-	// the normal system path. The FSK slicer (REG_58/70/72) is fed by the FM
-	// demodulator regardless of the AF output routing, so RX does not need AF
-	// held at FM. With the forcing gone the squelch closes normally, which also
-	// makes the old per-second AGC "kick" and the 5s squelch-stuck recovery
-	// (both band-aids for this same forcing) unnecessary - all removed.
+	// BK4829 quirk: many code paths (squelch setup, beeps, tones) leave the
+	// AF path on AF_MUTE, which also silences the FM demod feeding the FSK
+	// slicer - the modem then misses every packet until something reopens
+	// the AF (e.g. monitor). While idle with messenger RX enabled, force the
+	// AF path back to FM; the write is deduplicated by the driver cache and
+	// is inaudible because the speaker amp GPIO stays off.
+	if (gEeprom.MESSENGER_CONFIG.data.receive &&
+	    gCurrentFunction == FUNCTION_FOREGROUND &&
+	    msgStatus == READY) {
+		const uint8_t af = (BK4819_ReadRegister(BK4819_REG_47) >> 8) & 0xFu;
+		if (af == BK4819_AF_MUTE)
+			BK4819_SetAF(BK4819_AF_FM);
+	}
+
+	// deterministic anti-drift: holding AF=FM continuously while idle (see
+	// above) lets the BK4829's auto AGC drift its gain upward on noise
+	// until the RSSI crosses the squelch-open threshold and the squelch
+	// latches open. The previous periodic enable/disable "kick" did NOT
+	// reset the AGC loop's accumulated gain (REG_7E bit15 only selects
+	// fixed/auto mode) and was gated on !g_SquelchLost, so it stopped
+	// working exactly when the squelch got stuck. Instead, pin the AGC to
+	// its fixed-gain mode (fix index 3, the chip's boot default preloaded
+	// by BK4819_Init via REG_7E=0x303E) for as long as the receiver
+	// genuinely idles: with a constant gain the drift is physically
+	// impossible. Restore auto AGC on any real activity (squelch opened
+	// by an actual carrier, CTCSS evaluation, message being received,
+	// monitor) so voice RX keeps its normal behaviour. Timing is safe:
+	// TX preamble is 15 bytes = ~100ms at AFSK1200, the un-pin happens
+	// within one 10ms tick of sqlLost, leaving ~90ms of preamble before
+	// the sync word. FM only: AM listening has its own AGC management
+	// (AM fix) that must not be fought.
+	//
+	// The desired state is re-asserted every tick instead of cached in a
+	// flag: BK4819_SetAGC() reads REG_7E and returns early when already
+	// in the requested mode (one register read per 10ms, same cost as
+	// the AF check above), which makes this immune to any other code
+	// path rewriting REG_7E behind our back (RADIO_SetupAGC has its own
+	// dedup cache and can flip the chip to auto without us knowing).
+	if (gRxVfo != NULL && gRxVfo->Modulation == MODULATION_FM &&
+	    (gCurrentFunction == FUNCTION_FOREGROUND ||
+	     gCurrentFunction == FUNCTION_INCOMING  ||
+	     gCurrentFunction == FUNCTION_RECEIVE   ||
+	     gCurrentFunction == FUNCTION_MONITOR)) {
+		const bool idle = gEeprom.MESSENGER_CONFIG.data.receive &&
+		                  gCurrentFunction == FUNCTION_FOREGROUND &&
+		                  msgStatus == READY && !g_SquelchLost;
+		BK4819_SetAGC(!idle);
+	}
+
+	// recovery: BK4819_REG_02's sqlLost bit is level-triggered off RSSI vs
+	// the REG_78 thresholds. If the squelch reports "open" continuously for
+	// 5s while no FSK packet is in progress, redo the same RX-chain restart
+	// a channel change does (BK4819_SetupSquelch + MSG_EnableRX). A real
+	// signal re-opens the squelch within 10ms (brief audio blip); a stuck
+	// false reading gets cleared.
+	if (gEeprom.MESSENGER_CONFIG.data.receive &&
+	    gCurrentFunction != FUNCTION_TRANSMIT &&
+	    msgStatus == READY) {
+		static uint16_t squelchStuck10ms = 0;
+		if (g_SquelchLost) {
+			if (++squelchStuck10ms >= 500) {
+				squelchStuck10ms = 0;
+				RADIO_SetupRegisters(false);
+			}
+		} else {
+			squelchStuck10ms = 0;
+		}
+	}
 
 	if (msgStatus != RECEIVING) {
 		gMsgRxTimeout10ms = 0;
