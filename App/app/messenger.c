@@ -630,39 +630,40 @@ void MSG_CheckRxTimeout(void) {
 			BK4819_SetAF(BK4819_AF_FM);
 	}
 
-	// deterministic anti-drift: holding AF=FM continuously while idle (see
-	// above) lets the BK4829's auto AGC drift its gain upward on noise
+	// anti-drift: holding AF=FM continuously while idle (see above) lets
+	// the BK4829's auto AGC drift its gain upward on noise over MINUTES
 	// until the RSSI crosses the squelch-open threshold and the squelch
-	// latches open. The previous periodic enable/disable "kick" did NOT
-	// reset the AGC loop's accumulated gain (REG_7E bit15 only selects
-	// fixed/auto mode) and was gated on !g_SquelchLost, so it stopped
-	// working exactly when the squelch got stuck. Instead, pin the AGC to
-	// its fixed-gain mode (fix index 3, the chip's boot default preloaded
-	// by BK4819_Init via REG_7E=0x303E) for as long as the receiver
-	// genuinely idles: with a constant gain the drift is physically
-	// impossible. Restore auto AGC on any real activity (squelch opened
-	// by an actual carrier, CTCSS evaluation, message being received,
-	// monitor) so voice RX keeps its normal behaviour. Timing is safe:
-	// TX preamble is 15 bytes = ~100ms at AFSK1200, the un-pin happens
-	// within one 10ms tick of sqlLost, leaving ~90ms of preamble before
-	// the sync word. FM only: AM listening has its own AGC management
-	// (AM fix) that must not be fought.
-	//
-	// The desired state is re-asserted every tick instead of cached in a
-	// flag: BK4819_SetAGC() reads REG_7E and returns early when already
-	// in the requested mode (one register read per 10ms, same cost as
-	// the AF check above), which makes this immune to any other code
-	// path rewriting REG_7E behind our back (RADIO_SetupAGC has its own
-	// dedup cache and can flip the chip to auto without us knowing).
-	if (gRxVfo != NULL && gRxVfo->Modulation == MODULATION_FM &&
-	    (gCurrentFunction == FUNCTION_FOREGROUND ||
-	     gCurrentFunction == FUNCTION_INCOMING  ||
-	     gCurrentFunction == FUNCTION_RECEIVE   ||
-	     gCurrentFunction == FUNCTION_MONITOR)) {
+	// opens on nothing. An earlier fix pinned the AGC to fixed-gain mode
+	// while idle - drift-proof, but it also capped the RX gain: a weak
+	// signal arriving during idle never got the auto AGC ramp (and if it
+	// stayed below the squelch threshold the un-pin never triggered), so
+	// the K1 received measurably worse than the K5, which listens with
+	// auto AGC. Instead keep the AGC in auto (full sensitivity, same as
+	// the K5) and periodically do a FULL AGC re-init while genuinely idle:
+	// unlike the old REG_7E bit15 "kick" (086ee4f, which only toggled the
+	// fixed/auto mode bit), the SetAGC(false)+InitAGC+SetAGC(true) toggle
+	// rewrites the gain table and restarts the loop from its baseline, so
+	// the accumulated drift is discarded every 15s - far too short a
+	// window for the minutes-scale drift to reach the squelch threshold.
+	// Gated on genuine idle only (READY, squelch closed, FOREGROUND, FM):
+	// any activity resets the countdown, so a reception in progress is
+	// never disturbed. AM listening has its own AGC management (AM fix)
+	// and is left alone. Worst case if drift ever slips through anyway:
+	// the squelch opens on noise and the 5s recovery below closes it.
+	{
+		static uint16_t agcReinit10ms = 0;
 		const bool idle = gEeprom.MESSENGER_CONFIG.data.receive &&
 		                  gCurrentFunction == FUNCTION_FOREGROUND &&
-		                  msgStatus == READY && !g_SquelchLost;
-		BK4819_SetAGC(!idle);
+		                  msgStatus == READY && !g_SquelchLost &&
+		                  gRxVfo != NULL && gRxVfo->Modulation == MODULATION_FM;
+		if (!idle) {
+			agcReinit10ms = 0;
+		} else if (++agcReinit10ms >= 1500) {  // every 15s of genuine idle
+			agcReinit10ms = 0;
+			BK4819_SetAGC(false);
+			BK4819_InitAGC(false);
+			BK4819_SetAGC(true);
+		}
 	}
 
 	// recovery: BK4819_REG_02's sqlLost bit is level-triggered off RSSI vs
