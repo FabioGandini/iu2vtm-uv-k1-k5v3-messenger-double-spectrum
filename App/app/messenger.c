@@ -295,9 +295,30 @@ void MSG_FSKSendData() {
 
 }
 
+// deferred FSK-RX arming (GOGUFW principle): never manipulate the BK4829's
+// FSK/DSP chain while a carrier is present. GOGUFW, on the identical chip,
+// never latches its squelch - and the one discipline it follows that we
+// didn't is gating every FSK arm/re-arm on "channel free" (REG_0C bit1).
+// Our latch signature ("stuck open after a real RX, only a REG_00 soft
+// reset clears it") matches arming the FSK engine on top of an active
+// carrier: RADIO_SetupRegisters() calls MSG_EnableRX(true) on every channel
+// change (possibly onto an occupied frequency) and at the tail of every RX.
+// When the channel is busy we set this flag instead and the 10ms tick
+// (MSG_CheckRxTimeout) performs the arm as soon as the squelch closes.
+// Nothing is lost while deferred: FSK can't be decoded under voice anyway.
+static bool gMsgRxArmPending;
+
 void MSG_EnableRX(const bool enable) {
 
 	if (enable) {
+		if (gEeprom.MESSENGER_CONFIG.data.receive &&
+		    (BK4819_ReadRegister(BK4819_REG_0C) & (1u << 1))) {
+			// carrier present: defer the whole bring-up (see above)
+			gMsgRxArmPending = true;
+			return;
+		}
+		gMsgRxArmPending = false;
+
 		// Fully reset the FSK engine before reconfiguring it. REG_59 (FSK
 		// control: RX/TX enable, FIFO-clear, scramble bits) is only ever OR'd
 		// into elsewhere - FskEnableRx() sets bit12, FskClearFifo() sets
@@ -351,6 +372,7 @@ void MSG_EnableRX(const bool enable) {
 			BK4819_SetAF(BK4819_AF_FM);
 		}
 	} else {
+		gMsgRxArmPending = false;
 		BK4819_WriteRegister(BK4819_REG_70, 0);
 		BK4819_WriteRegister(BK4819_REG_58, 0);
 	}
@@ -539,6 +561,17 @@ void MSG_CheckRxTimeout(void) {
 	// deferred PONG reply to a range-check PING (jittered to avoid collisions)
 	if (gMsgPongCountdown10ms && --gMsgPongCountdown10ms == 0)
 		MSG_SendPong();
+
+	// deferred FSK-RX arm (see gMsgRxArmPending in MSG_EnableRX): the arm was
+	// requested while a carrier was open; retry as soon as the squelch has
+	// closed. g_SquelchLost gates the (SPI) hardware re-check inside
+	// MSG_EnableRX so the tick stays free of register reads while a signal
+	// is being received.
+	if (gMsgRxArmPending &&
+	    gEeprom.MESSENGER_CONFIG.data.receive &&
+	    gCurrentFunction != FUNCTION_TRANSMIT &&
+	    !g_SquelchLost)
+		MSG_EnableRX(true);
 
 	// BK4829 quirk: many code paths (squelch setup, beeps, tones) leave the
 	// AF path on AF_MUTE, which also silences the FM demod feeding the FSK
