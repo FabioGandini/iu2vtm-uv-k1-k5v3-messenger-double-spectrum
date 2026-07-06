@@ -522,12 +522,16 @@ static void Key_UP_DOWN(uint8_t state, int8_t Step)
         return;
     }
 
-    // NB: no SET_NAV re-inversion here. The call site already passes the
-    // K1-oriented direction (KEY_UP -> -1, same hardcoded mapping the main
-    // VFO screen uses in main.c); flipping it again for SET_NAV=0 (the
-    // UV-K1 default) restored the K5 orientation and made the FM tuning
-    // keys feel inverted on the K1. For SET_NAV=1 nothing changes: that
-    // path never flipped.
+    // SET_NAV (exposed in CHIRP as the direction-keys layout) flips the
+    // natural direction for the K1 layout, same convention as scanner/
+    // aircopy/spectrum: the call site passes KEY_UP -> +1 and SET_NAV=0
+    // (the UV-K1 default) inverts it to match the main VFO screen's
+    // hardcoded mapping. Previously the call site passed -1 AND this
+    // block flipped it again, so on a default K1 the FM tuning keys came
+    // out K5-oriented (inverted).
+    if (!gEeprom.SET_NAV) {
+        Step = -Step;
+    }
 
     if (gAskToSave) {
         gRequestDisplayScreen = DISPLAY_FM;
@@ -587,7 +591,7 @@ void FM_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
             break;
         case KEY_UP:
         case KEY_DOWN:
-            Key_UP_DOWN(state, Key == KEY_UP ? -1 : 1);
+            Key_UP_DOWN(state, Key == KEY_UP ? 1 : -1);
             break;
         case KEY_EXIT:
             Key_EXIT(state);
