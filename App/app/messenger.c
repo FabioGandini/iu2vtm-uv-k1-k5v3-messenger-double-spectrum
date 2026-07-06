@@ -891,10 +891,38 @@ void MSG_HandleReceive(){
 		if (gScreenToDisplay != DISPLAY_MSG) hasNewMessage = 1;
 		gUpdateStatus = true;
 		gUpdateDisplay = true;
-		// window sized for the ~0.5s packet airtime (see MSG_Rand); the
-		// listen-before-talk in MSG_CheckRxTimeout handles residual overlaps
-		gMsgPongCountdown10ms = 50 + MSG_Rand() % 250;  // 0.5..3.0 s
-		gMsgPongRepeatDone = false;  // this PING gets two PONG copies
+		// deterministic reply slot: the trailing digits of the callsign are
+		// the per-radio ID (IU2VTM01, IU2VTM02, ...), so use them to assign
+		// a fixed time slot - radios with different IDs can NEVER collide,
+		// no randomness required. Slot pitch 0.7s > packet airtime (~0.5s)
+		// + TX spin-up (~0.15s), so adjacent slots cannot overlap; one copy
+		// is enough. Radios without a numeric ID fall back to the random
+		// jitter window and transmit a second copy as collision insurance
+		// (see gMsgPongRepeatDone); LBT and the RX dedup stay as safety
+		// nets for both cases (e.g. voice occupying the channel).
+		{
+			uint8_t id = 0;
+			bool hasId = false;
+			for (uint8_t i = 0; i < sizeof(gEeprom.CALLSIGN); i++) {
+				const char c = gEeprom.CALLSIGN[i];
+				if (c == 0 || (uint8_t)c == 0xFF)
+					break;
+				if (c >= '0' && c <= '9') {
+					id = (uint8_t)(id * 10 + (c - '0'));
+					hasId = true;
+				} else {
+					id = 0;
+					hasId = false;  // digits must be trailing
+				}
+			}
+			if (hasId && id > 0) {
+				gMsgPongCountdown10ms = 50 + ((id - 1) % 8) * 70;  // slot 0.5..5.4 s
+				gMsgPongRepeatDone = true;   // deterministic slot: single copy
+			} else {
+				gMsgPongCountdown10ms = 50 + MSG_Rand() % 250;  // 0.5..3.0 s
+				gMsgPongRepeatDone = false;  // random jitter: two copies
+			}
+		}
 		return;
 	} else if (dataPacket.data.header == PONG_PACKET) {
 		// double-PONG dedup: every replier transmits its PONG twice (see
