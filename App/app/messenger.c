@@ -598,8 +598,19 @@ void MSG_CheckRxTimeout(void) {
 	// audio, and arming FSK / re-initing the AGC is pointless with the
 	// receiver parked. Leave the chip alone; RADIO_SetupRegisters re-arms
 	// the messenger when the FM radio exits.
-	if (gFmRadioMode)
+	if (gFmRadioMode) {
+		// ...but not touching it is not enough: on FM entry the AF is
+		// typically ALREADY forced open by the idle block below, nobody
+		// re-mutes it, and its demod noise (hiss) buries the broadcast
+		// audio. Undo our own forcing while the FM radio plays normally
+		// (skip while a VFO reception legitimately owns the speaker).
+		if (gCurrentFunction == FUNCTION_FOREGROUND) {
+			const uint8_t af = (BK4819_ReadRegister(BK4819_REG_47) >> 8) & 0xFu;
+			if (af == BK4819_AF_FM)
+				BK4819_SetAF(BK4819_AF_MUTE);
+		}
 		return;
+	}
 #endif
 	// deferred ACK / PONG transmission (see MSG_HandleReceive). Listen-
 	// before-talk: if the channel is busy when the countdown expires
