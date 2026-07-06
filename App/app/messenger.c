@@ -80,13 +80,25 @@ uint8_t gMsgRxTimeout10ms;
 
 // deferred ACK: armed by MSG_HandleReceive, fired from the 10ms tick so
 // the received message is drawn before the radio keys up for the reply
-uint8_t gMsgAckCountdown10ms;
+uint16_t gMsgAckCountdown10ms;
 
 // range check: deferred PONG reply (armed on PING RX, with random jitter so
 // multiple radios don't all answer at once) and the RSSI of the last packet
-uint8_t gMsgPongCountdown10ms;
+uint16_t gMsgPongCountdown10ms;
 static int16_t gMsgLastRxRssiDbm;
 static void MSG_SendPong(void);
+
+// small xorshift PRNG for the ACK/PONG reply jitter. An AFSK1200 packet
+// occupies the air for ~0.5s (15B preamble + sync + payload at 1200 bit/s),
+// so anti-collision windows must be several times that: with the old 0.5s
+// PONG window two repliers overlapped almost every time, and the ACK had no
+// jitter at all (fixed 700ms - two radios acknowledging the same broadcast
+// keyed up in the same instant, guaranteed collision).
+static uint16_t MSG_Rand(void) {
+	static uint16_t s_rng = 0xACE1;
+	s_rng ^= s_rng << 7; s_rng ^= s_rng >> 9; s_rng ^= s_rng << 8;
+	return s_rng;
+}
 
 uint8_t hasNewMessage = 0;
 
@@ -554,13 +566,23 @@ void MSG_StorePacket(const uint16_t interrupt_bits) {
 // FSK reception (sync detected but FSK_RX_FINISHED never arrives), which
 // otherwise leaves msgStatus == RECEIVING and the squelch open forever
 void MSG_CheckRxTimeout(void) {
-	// deferred ACK transmission (see MSG_HandleReceive)
-	if (gMsgAckCountdown10ms && --gMsgAckCountdown10ms == 0)
-		MSG_SendAck();
+	// deferred ACK / PONG transmission (see MSG_HandleReceive). Listen-
+	// before-talk: if the channel is busy when the countdown expires
+	// (typically another radio's reply already in the air), re-draw a fresh
+	// back-off instead of transmitting on top of it.
+	if (gMsgAckCountdown10ms && --gMsgAckCountdown10ms == 0) {
+		if (g_SquelchLost)
+			gMsgAckCountdown10ms = 30 + MSG_Rand() % 120;  // busy: retry in 0.3..1.5s
+		else
+			MSG_SendAck();
+	}
 
-	// deferred PONG reply to a range-check PING (jittered to avoid collisions)
-	if (gMsgPongCountdown10ms && --gMsgPongCountdown10ms == 0)
-		MSG_SendPong();
+	if (gMsgPongCountdown10ms && --gMsgPongCountdown10ms == 0) {
+		if (g_SquelchLost)
+			gMsgPongCountdown10ms = 30 + MSG_Rand() % 120;  // busy: retry in 0.3..1.5s
+		else
+			MSG_SendPong();
+	}
 
 	// deferred FSK-RX arm (see gMsgRxArmPending in MSG_EnableRX): the arm was
 	// requested while a carrier was open; retry as soon as the squelch has
@@ -760,11 +782,9 @@ void MSG_HandleReceive(){
 		if (gScreenToDisplay != DISPLAY_MSG) hasNewMessage = 1;
 		gUpdateStatus = true;
 		gUpdateDisplay = true;
-		{
-			static uint16_t s_rng = 0xACE1;  // xorshift jitter seed
-			s_rng ^= s_rng << 7; s_rng ^= s_rng >> 9; s_rng ^= s_rng << 8;
-			gMsgPongCountdown10ms = 50 + (s_rng % 50);  // 0.5..1.0 s
-		}
+		// window sized for the ~0.5s packet airtime (see MSG_Rand); the
+		// listen-before-talk in MSG_CheckRxTimeout handles residual overlaps
+		gMsgPongCountdown10ms = 50 + MSG_Rand() % 250;  // 0.5..3.0 s
 		return;
 	} else if (dataPacket.data.header == PONG_PACKET) {
 		// a station answered our ping: show its callsign, estimated distance
@@ -827,7 +847,12 @@ void MSG_HandleReceive(){
 		dataPacket.data.header == ENCRYPTED_MESSAGE_PACKET)
 	{
 		if(gEeprom.MESSENGER_CONFIG.data.ack)
-			gMsgAckCountdown10ms = 70;  // 700ms
+			// jittered: two radios acknowledging the same broadcast must not
+			// key up together (the old fixed 700ms collided deterministically).
+			// Min 0.5s keeps the original margin for the sender to re-arm its
+			// RX after TX; listen-before-talk in MSG_CheckRxTimeout handles
+			// residual overlaps.
+			gMsgAckCountdown10ms = 50 + MSG_Rand() % 150;  // 0.5..2.0 s
 	}
 }
 
