@@ -253,6 +253,9 @@ static bool ScreenSaverCanDisplay(void)
         gEeprom.BACKLIGHT_TIME == 0 ||
         gEeprom.BACKLIGHT_TIME >= 61 ||
         gScreenSaverDisplayed ||
+#ifdef ENABLE_FEAT_F4HWN_SLEEP
+        gWakeUp ||
+#endif
         gCurrentFunction == FUNCTION_TRANSMIT ||
         FUNCTION_IsRx() ||
         gPttIsPressed
@@ -1704,6 +1707,8 @@ void APP_TimeSlice10ms(void)
 #endif
         ) {
         SCREENSHOT_Update(false);
+    } else if (SCREENSHOT_HasPendingStateChange()) {
+        SCREENSHOT_Update(false);
     }
     #endif
 
@@ -1966,6 +1971,9 @@ void APP_TimeSlice500ms(void)
             gBacklightCountdown_500ms = 0;
             gPowerSave_10ms = 1;
             gWakeUp = true;
+#ifdef ENABLE_FEAT_F4HWN_LOGO_SAV
+            ScreenSaverExit();
+#endif
             // TODO:
             // PWM_PLUS0_CH0_COMP = 0;
             BACKLIGHT_SetBrightness(0);
