@@ -678,7 +678,15 @@ VOX_LIST = ["OFF", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
 
 MEM_SIZE =      0x00B190    # size of all memory
 PROG_SIZE =     0x00A171    # size of the memory that we will write (LAST ADDRESS + 1 !!!)
-MEM_BLOCK =     0x80        # largest block of memory that we can reliably write
+MEM_BLOCK =     0x80        # largest block of memory that we can reliably read
+# Write block kept small so the whole 0x051D frame (data + 20 bytes overhead)
+# fits in a single 64-byte USB bulk packet: the radio's USB-C CDC firmware
+# loses host->radio transfers that span multiple USB packets, while the
+# Kenwood UART cable (plain DMA ring) accepts any length. 0x28 -> 60-byte
+# frame. Diagnostic alternative: 0x68 -> 124-byte frame (2 packets, single
+# 128-byte transfer) to discriminate the 64- vs 128-byte threshold.
+# Must be a multiple of 8 (the firmware writes 8-byte EEPROM pages).
+WRITE_BLOCK =   0x28
 CAL_START =     0x00B000    # calibration memory start address
 F4HWN_START =   0x00A158    # calibration F4HWN memory start address
 
@@ -1002,7 +1010,7 @@ def do_upload(radio):
         addr = start_addr
         while addr < stop_addr:
             remaining = stop_addr - addr
-            chunk = MEM_BLOCK if remaining >= MEM_BLOCK else remaining
+            chunk = WRITE_BLOCK if remaining >= WRITE_BLOCK else remaining
 
             dat = radio.get_mmap()[addr:addr + chunk]
 
