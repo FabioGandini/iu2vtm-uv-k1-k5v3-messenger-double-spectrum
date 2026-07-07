@@ -998,7 +998,7 @@ static void RXTX_LOG_FormatTitle(const RXTX_LogEntry_t *entry, char *buffer)
 static void RXTX_LOG_FormatSMeter(uint8_t sMeter, char *buffer)
 {
     if (sMeter > 9)
-        sprintf(buffer, "S9+%u", sMeter - 9u);
+        sprintf(buffer, "S9+%02u", sMeter - 9u);
     else
         sprintf(buffer, "S%u", sMeter);
 }
@@ -1085,7 +1085,12 @@ void UI_DisplayRxTxLog(void)
             RXTX_LOG_FormatSMeter(entry.sMeter, detail);
         else
             sprintf(detail, "%02u:%02u", entry.durationSeconds / 60u, entry.durationSeconds % 60u);
-        GUI_DisplaySmallestInverse(detail, 107, row, false, true, 127);
+        // Draw the fixed-width badge first, then punch the text out of it
+        // centered: text length varies (Sn vs S9+XX vs MM:SS), the badge
+        // must not. Each glyph cell is 4 px wide, 5 cells fill the badge.
+        GUI_DisplaySmallestInverse("", 107, row, false, true, 127);
+        GUI_DisplaySmallest(detail, (uint8_t)(107u + (5u - strlen(detail)) * 2u),
+                            (uint8_t)((row * 8u) + 1u), false, false);
     }
 
     ST7565_BlitFullScreen();
