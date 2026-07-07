@@ -107,6 +107,7 @@ static bool            gViewWrapPending;
 static uint16_t        gViewTotalRows;
 #endif
 static bool            gClearActive;
+static bool            gClearConfirmActive;
 static uint8_t         gClearSector;
 static bool            gMenuClearHandled;
 static bool            gLogHasTraffic;
@@ -355,10 +356,20 @@ static void RXTX_LOG_StartClear(void)
     if (gClearActive)
         return;
 
-    gClearActive   = true;
-    gSessionActive = false;
-    gLogCursor     = 0;
+    gClearActive        = true;
+    gClearConfirmActive = false;
+    gSessionActive      = false;
+    gLogCursor          = 0;
     RXTX_LOG_ResetLogCounters();
+}
+
+static void RXTX_LOG_CancelClearConfirm(void)
+{
+    if (!gClearConfirmActive)
+        return;
+
+    gClearConfirmActive = false;
+    gUpdateDisplay = true;
 }
 
 static void RXTX_LOG_StepClear(void)
@@ -760,12 +771,13 @@ void RXTX_LOG_Init(void)
     gSessionActive    = false;
     gSessionSMeter    = RXTX_LOG_SMETER_UNKNOWN;
     gSessionBattVolt  = RXTX_LOG_BATT_UNKNOWN;
-    gClearActive      = false;
-    gClearSector      = 0;
-    gMenuClearHandled = false;
-    gLogDetailMode    = RXTX_LOG_DETAIL_DURATION;
-    gLogHasTraffic    = false;
-    gNextFlashAddress = RXTX_LOG_FLASH_BASE;
+    gClearActive        = false;
+    gClearConfirmActive = false;
+    gClearSector        = 0;
+    gMenuClearHandled   = false;
+    gLogDetailMode      = RXTX_LOG_DETAIL_DURATION;
+    gLogHasTraffic      = false;
+    gNextFlashAddress   = RXTX_LOG_FLASH_BASE;
     RXTX_LOG_InvalidateViewCache();
 
     for (uint32_t address = RXTX_LOG_FLASH_BASE; address < RXTX_LOG_FLASH_END; address += sizeof(RXTX_LogFlashEntry_t)) {
@@ -892,6 +904,8 @@ void ACTION_RxTxLog(void)
 {
     gLogCursor = 0;
     gLogDetailMode = RXTX_LOG_DETAIL_DURATION;
+    gClearConfirmActive = false;
+    gMenuClearHandled = false;
     RXTX_LOG_InvalidateViewCache();
     gUpdateStatus = true;
     GUI_SelectNextDisplay(DISPLAY_RXTX_LOG);
@@ -900,6 +914,7 @@ void ACTION_RxTxLog(void)
 void RXTX_LOG_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 {
     if (Key == KEY_PTT) {
+        RXTX_LOG_CancelClearConfirm();
         GENERIC_Key_PTT(bKeyPressed);
         return;
     }
@@ -919,6 +934,7 @@ void RXTX_LOG_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
         // GENERIC_Key_F only toggles the flag on the MAIN screen, so
         // handle it here: F arms a go-to-first/last modifier for UP/DOWN.
         if (bKeyPressed && !bKeyHeld) {
+            RXTX_LOG_CancelClearConfirm();
             gWasFKeyPressed = !gWasFKeyPressed;
             if (gWasFKeyPressed)
                 gKeyInputCountdown = key_input_timeout_500ms;
@@ -927,6 +943,7 @@ void RXTX_LOG_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
         break;
 
     case KEY_UP:
+        RXTX_LOG_CancelClearConfirm();
         if (gWasFKeyPressed) {
             HideFKeyIcon();
             RXTX_LOG_StartCursorView(0);
@@ -942,6 +959,7 @@ void RXTX_LOG_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
         break;
 
     case KEY_DOWN:
+        RXTX_LOG_CancelClearConfirm();
         if (gWasFKeyPressed) {
             HideFKeyIcon();
             RXTX_LOG_GoToLastRow();
@@ -982,23 +1000,28 @@ void RXTX_LOG_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
         break;
 
     case KEY_MENU:
-        if (bKeyHeld) {
-            if (bKeyPressed && !gMenuClearHandled) {
-                gMenuClearHandled = true;
-                RXTX_LOG_StartClear();
-                gBeepToPlay = BEEP_1KHZ_60MS_OPTIONAL;
-                gUpdateStatus = true;
-                gUpdateDisplay = true;
-            }
-        } else if (!bKeyPressed) {
-            if (!gMenuClearHandled)
+        if (!bKeyPressed) {
+            if (!bKeyHeld && !gMenuClearHandled) {
+                RXTX_LOG_CancelClearConfirm();
                 RXTX_LOG_NextFilter();
+            }
             gMenuClearHandled = false;
+        } else if (bKeyHeld && !gMenuClearHandled) {
+            gMenuClearHandled = true;
+            if (gClearConfirmActive) {
+                RXTX_LOG_StartClear();
+            } else {
+                gClearConfirmActive = true;
+            }
+            gBeepToPlay = BEEP_1KHZ_60MS_OPTIONAL;
+            gUpdateStatus = true;
+            gUpdateDisplay = true;
         }
         break;
 
     case KEY_STAR:
         if (bKeyPressed && !bKeyHeld) {
+            RXTX_LOG_CancelClearConfirm();
             gLogDetailMode = gLogDetailMode >= RXTX_LOG_DETAIL_BATT
                 ? RXTX_LOG_DETAIL_DURATION
                 : (uint8_t)(gLogDetailMode + 1u);
@@ -1007,6 +1030,11 @@ void RXTX_LOG_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
         break;
 
     case KEY_EXIT:
+        if (gClearConfirmActive) {
+            RXTX_LOG_CancelClearConfirm();
+            break;
+        }
+        RXTX_LOG_CancelClearConfirm();
         gRequestDisplayScreen = DISPLAY_MAIN;
         gUpdateStatus = true;
         break;
@@ -1060,7 +1088,14 @@ static void RXTX_LOG_DrawSessionMarker(uint8_t line)
 static void RXTX_LOG_ShowEmpty(bool showMessage)
 {
     if (showMessage)
-        UI_PrintStringSmallBold("NO LOG", 0, 127, 3);
+        UI_PrintString("NO LOG", 0, 127, 1, 8);
+    ST7565_BlitFullScreen();
+}
+
+static void RXTX_LOG_ShowClearConfirm(void)
+{
+    UI_PrintString("CLEAR LOG", 0, 127, 1, 8);
+    UI_PrintString("SURE?", 0, 127, 3, 8);
     ST7565_BlitFullScreen();
 }
 
@@ -1074,6 +1109,11 @@ void UI_DisplayRxTxLog(void)
 
     if (gClearActive) {
         RXTX_LOG_ShowEmpty(true);
+        return;
+    }
+
+    if (gClearConfirmActive) {
+        RXTX_LOG_ShowClearConfirm();
         return;
     }
 
