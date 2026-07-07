@@ -1129,7 +1129,9 @@ static void NextMemChannel(void)
 
     if (!enabled || chan == 0xFFFF)
     {
+#ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
         const uint16_t searchStart = gNextMrChannel;
+#endif
         chan = RADIO_FindNextChannel(gNextMrChannel + gScanStateDir, gScanStateDir, true, gEeprom.SCAN_LIST_DEFAULT);
         if (chan == 0xFFFF)
         {   // no valid channel found -> wrapping back to the first channel
