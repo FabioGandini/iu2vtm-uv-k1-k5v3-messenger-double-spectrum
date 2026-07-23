@@ -747,30 +747,37 @@ void MSG_CheckRxTimeout(void) {
 	    gCurrentFunction != FUNCTION_TRANSMIT) {
 		static uint16_t squelchStuck10ms = 0;
 		if (g_SquelchLost) {
-			if (squelchStuck10ms < 800)
-				squelchStuck10ms++;
-			if ((squelchStuck10ms >= 500 && msgStatus == READY) ||
-			    squelchStuck10ms >= 800) {
-				squelchStuck10ms = 0;
+			const uint16_t rssi = BK4819_GetRSSI();
+			const bool genuineSignal = gRxVfo != NULL &&
+			                           rssi >= gRxVfo->SquelchCloseRSSIThresh;
+			if (genuineSignal) {
+				squelchStuck10ms = 0;  // real signal, not the latch bug
+			} else {
+				if (squelchStuck10ms < 800)
+					squelchStuck10ms++;
+				if ((squelchStuck10ms >= 500 && msgStatus == READY) ||
+				    squelchStuck10ms >= 800) {
+					squelchStuck10ms = 0;
 #ifdef ENABLE_UART
-				// diagnostic snapshot of the latched state, taken right before
-				// the re-init wipes it: log with a serial terminal (38400 8N1,
-				// Kenwood cable) to identify WHICH register actually latches
-				printf("\nSQLSTUCK 02=%04X 0C=%04X 67=%04X 7E=%04X 58=%04X 59=%04X 70=%04X 72=%04X 30=%04X 47=%04X 3F=%04X",
-				       BK4819_ReadRegister(BK4819_REG_02),
-				       BK4819_ReadRegister(BK4819_REG_0C),
-				       BK4819_ReadRegister(BK4819_REG_67),
-				       BK4819_ReadRegister(BK4819_REG_7E),
-				       BK4819_ReadRegister(BK4819_REG_58),
-				       BK4819_ReadRegister(BK4819_REG_59),
-				       BK4819_ReadRegister(BK4819_REG_70),
-				       BK4819_ReadRegister(BK4819_REG_72),
-				       BK4819_ReadRegister(BK4819_REG_30),
-				       BK4819_ReadRegister(BK4819_REG_47),
-				       BK4819_ReadRegister(BK4819_REG_3F));
+					// diagnostic snapshot of the latched state, taken right before
+					// the re-init wipes it: log with a serial terminal (38400 8N1,
+					// Kenwood cable) to identify WHICH register actually latches
+					printf("\nSQLSTUCK 02=%04X 0C=%04X 67=%04X 7E=%04X 58=%04X 59=%04X 70=%04X 72=%04X 30=%04X 47=%04X 3F=%04X",
+					       BK4819_ReadRegister(BK4819_REG_02),
+					       BK4819_ReadRegister(BK4819_REG_0C),
+					       BK4819_ReadRegister(BK4819_REG_67),
+					       BK4819_ReadRegister(BK4819_REG_7E),
+					       BK4819_ReadRegister(BK4819_REG_58),
+					       BK4819_ReadRegister(BK4819_REG_59),
+					       BK4819_ReadRegister(BK4819_REG_70),
+					       BK4819_ReadRegister(BK4819_REG_72),
+					       BK4819_ReadRegister(BK4819_REG_30),
+					       BK4819_ReadRegister(BK4819_REG_47),
+					       BK4819_ReadRegister(BK4819_REG_3F));
 #endif
-				BK4819_Init();
-				RADIO_SetupRegisters(false);
+					BK4819_Init();
+					RADIO_SetupRegisters(false);
+				}
 			}
 		} else {
 			squelchStuck10ms = 0;
