@@ -130,15 +130,14 @@ enum ACTION_OPT_t {
         ACTION_OPT_REMOVE_OFFSET,
     #endif
 #endif
-#ifdef ENABLE_REGA
-    ACTION_OPT_REGA_ALARM,
-    ACTION_OPT_REGA_TEST,
-#endif
 #ifdef ENABLE_FEAT_F4HWN_BEAM
     ACTION_OPT_BEAM,
 #endif
 #ifdef ENABLE_MESSENGER
     ACTION_OPT_MESSENGER,
+#endif
+#ifdef ENABLE_FEAT_F4HWN_RXTX_LOG
+    ACTION_OPT_RXTX_LOG,
 #endif
     ACTION_OPT_LEN
 };
@@ -206,7 +205,6 @@ typedef struct {
     uint8_t               TX_TIMEOUT_TIMER;
     bool                  KEY_LOCK;
 #ifdef ENABLE_FEAT_F4HWN
-    bool                  KEY_LOCK_PTT;
     bool                  SET_NAV;
 #endif
 #ifdef ENABLE_FEAT_F4HWN_RESCUE_OPS

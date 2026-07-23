@@ -42,14 +42,14 @@
 #include "ui/inputbox.h"
 #include "ui/main.h"
 #include "ui/ui.h"
-#ifdef ENABLE_REGA
-    #include "app/rega.h"
-#endif
 #ifdef ENABLE_FEAT_F4HWN_BEAM
     #include "app/beam.h"
 #endif
 #ifdef ENABLE_MESSENGER
     #include "app/messenger.h"
+#endif
+#ifdef ENABLE_FEAT_F4HWN_RXTX_LOG
+    #include "app/rxtx_log.h"
 #endif
 
 #if defined(ENABLE_FMRADIO)
@@ -134,15 +134,14 @@ void (*action_opt_table[])(void) = {
 #else
     [ACTION_OPT_RXMODE] = &FUNCTION_NOP,
 #endif
-#ifdef ENABLE_REGA
-    [ACTION_OPT_REGA_ALARM] = &ACTION_RegaAlarm,
-    [ACTION_OPT_REGA_TEST] = &ACTION_RegaTest,
-#endif
 #ifdef ENABLE_FEAT_F4HWN_BEAM
     [ACTION_OPT_BEAM] = &ACTION_Beam,
 #endif
 #ifdef ENABLE_MESSENGER
     [ACTION_OPT_MESSENGER] = &ACTION_Messenger,
+#endif
+#ifdef ENABLE_FEAT_F4HWN_RXTX_LOG
+    [ACTION_OPT_RXTX_LOG] = &ACTION_RxTxLog,
 #endif
 };
 
@@ -479,7 +478,7 @@ static void ACTION_Scan_FM(bool bRestart)
 static void ACTION_AlarmOr1750(const bool b1750)
 {
 
-    if(gEeprom.KEY_LOCK && gEeprom.KEY_LOCK_PTT)
+    if(gEeprom.KEY_LOCK && (gSetting_set_lck & SET_LCK_PTT))
         return;
 
     #if defined(ENABLE_ALARM)
