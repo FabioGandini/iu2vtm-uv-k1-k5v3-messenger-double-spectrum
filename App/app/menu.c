@@ -429,7 +429,7 @@ int MENU_GetLimits(uint8_t menu_id, int32_t *pMin, int32_t *pMax)
         #endif
         case MENU_SET_LCK:
             //*pMin = 0;
-            *pMax = ARRAY_SIZE(gSubMenu_SET_LCK) - 1;
+            *pMax = SET_LCK_LEN - 1;
             break;
         case MENU_SET_MET:
         case MENU_SET_GUI:

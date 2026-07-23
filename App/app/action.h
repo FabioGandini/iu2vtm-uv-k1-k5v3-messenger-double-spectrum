@@ -50,6 +50,9 @@ void ACTION_SwitchDemodul(void);
         void ACTION_Power_High(void);
         void ACTION_Remove_Offset(void);
     #endif
+    #ifdef ENABLE_FEAT_F4HWN_RXTX_LOG
+        void ACTION_RxTxLog(void);
+    #endif
 #endif
 
 #ifdef ENABLE_MESSENGER

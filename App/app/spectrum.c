@@ -27,8 +27,8 @@
 #include "ui/helper.h"
 #include "ui/main.h"
 
-#ifdef ENABLE_FEAT_F4HWN_SCREENSHOT
-#include "screenshot.h"
+#ifdef ENABLE_FEAT_F4HWN_K5VIEWER
+#include "k5viewer.h"
 #endif
 
 #ifdef ENABLE_FEAT_F4HWN_SPECTRUM
@@ -278,7 +278,10 @@ static uint8_t DBm2S(int dbm)
 
 static int Rssi2DBm(uint16_t rssi)
 {
-    return (rssi / 2) - 160 + dBmCorrTable[gRxVfo->Band];
+    // Use the measured frequency's band for dBm correction instead of gRxVfo,
+    // which may not match the current scan frequency when sweeping.
+    const int band = FREQUENCY_GetBand(fMeasure);
+    return (rssi / 2) - 160 + dBmCorrTable[band];
 }
 
 static uint16_t GetRegMenuValue(uint8_t st)
@@ -960,7 +963,8 @@ static void ResetSpectrumToDefaults()
 
 static uint16_t dbm2rssi(int dBm)
 {
-    return (dBm + 160 - dBmCorrTable[gRxVfo->Band]) * 2;
+    const int band = FREQUENCY_GetBand(fMeasure);
+    return (dBm + 160 - dBmCorrTable[band]) * 2;
 }
 
 static void ClampRssiTriggerLevel()
@@ -2461,10 +2465,10 @@ static void UpdateListening()
 
 static void Tick()
 {
-#ifdef ENABLE_FEAT_F4HWN_SCREENSHOT
+#ifdef ENABLE_FEAT_F4HWN_K5VIEWER
     // Parse incoming packets on every tick so serial keys are never missed,
     // regardless of whether the screen needs redrawing.
-    SCREENSHOT_ParseInput();
+    K5VIEWER_ParseInput();
 #endif
 
     if (gNextTimeslice)
@@ -2532,9 +2536,9 @@ static void Tick()
     if (redrawScreen || ++renderTimer >= RENDER_PERIOD_TICKS)
     {
         Render();
-        // For screenshot
-        #ifdef ENABLE_FEAT_F4HWN_SCREENSHOT
-            SCREENSHOT_Update(false);
+        // For K5Viewer
+        #ifdef ENABLE_FEAT_F4HWN_K5VIEWER
+            K5VIEWER_Update(false);
         #endif
         redrawScreen = false;
         renderTimer = 0;
