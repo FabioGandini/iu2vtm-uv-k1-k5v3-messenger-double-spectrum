@@ -278,7 +278,10 @@ static uint8_t DBm2S(int dbm)
 
 static int Rssi2DBm(uint16_t rssi)
 {
-    return (rssi / 2) - 160 + dBmCorrTable[gRxVfo->Band];
+    // Use the measured frequency's band for dBm correction instead of gRxVfo,
+    // which may not match the current scan frequency when sweeping.
+    const int band = FREQUENCY_GetBand(fMeasure);
+    return (rssi / 2) - 160 + dBmCorrTable[band];
 }
 
 static uint16_t GetRegMenuValue(uint8_t st)
@@ -960,7 +963,8 @@ static void ResetSpectrumToDefaults()
 
 static uint16_t dbm2rssi(int dBm)
 {
-    return (dBm + 160 - dBmCorrTable[gRxVfo->Band]) * 2;
+    const int band = FREQUENCY_GetBand(fMeasure);
+    return (dBm + 160 - dBmCorrTable[band]) * 2;
 }
 
 static void ClampRssiTriggerLevel()
