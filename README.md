@@ -188,6 +188,11 @@ callsign, ping/range-check and distance-estimate features. Thanks also to
 and [@DualTachyon](https://github.com/DualTachyon), whose work laid the
 foundation for the whole UV-K5 open-source ecosystem.
 
+Parts of the BK4829 Messenger RX/re-arm strategy and channel-busy handling were
+informed by [GOGUFW](https://github.com/Gogu-Qs/GOGUFW-UV-K1-Messenger).
+GOGUFW's earlier Messenger and multi-radio Range Check implementation also
+served as a reference during development.
+
 > [!WARNING]
 > Use this firmware at your own risk. There is absolutely no guarantee that it
 > will work in any way shape or form on your radio(s), it may even brick your
