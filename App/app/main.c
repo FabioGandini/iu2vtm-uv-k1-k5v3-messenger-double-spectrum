@@ -276,14 +276,7 @@ static void processFKeyFunction(const KEY_Code_t Key, const bool beep)
             break;
 
         case KEY_7:
-#if defined(ENABLE_SPECTRUM_K5)
-            // F+7: kamilsss655 spectrum analyzer (takes the slot of the
-            // overlay-apps menu / breakout game); the F4HWN bandscope stays on F+5
-            if (!beep) {
-                APP_RunSpectrumK5();
-                gRequestDisplayScreen = DISPLAY_MAIN;
-            } else {
-#elif defined(ENABLE_FEAT_F4HWN_OVERLAY_APPS) || defined(ENABLE_FEAT_F4HWN_GAME)
+#if defined(ENABLE_FEAT_F4HWN_OVERLAY_APPS) || defined(ENABLE_FEAT_F4HWN_GAME)
             // F + 7 opens the overlay-apps menu when that support is built;
             // otherwise it launches the resident game (GAME); otherwise VOX.
             if (!beep) {
@@ -299,7 +292,7 @@ static void processFKeyFunction(const KEY_Code_t Key, const bool beep)
 //#else
 //              toggle_chan_scanlist();
 #endif
-#if defined(ENABLE_SPECTRUM_K5) || defined(ENABLE_FEAT_F4HWN_OVERLAY_APPS) || defined(ENABLE_FEAT_F4HWN_GAME)
+#if defined(ENABLE_FEAT_F4HWN_OVERLAY_APPS) || defined(ENABLE_FEAT_F4HWN_GAME)
             }
 #endif
 
@@ -307,7 +300,15 @@ static void processFKeyFunction(const KEY_Code_t Key, const bool beep)
 
         case KEY_8:
             if (!beep) {
-                ACTION_BackLightOnDemand(); 
+#if defined(ENABLE_SPECTRUM_K5)
+                // F+8 (IU2VTM): kamilsss655 spectrum analyzer with channel-scan.
+                // It replaces BackLightOnDemand here; F+7 is the overlay-apps
+                // menu and the F4HWN bandscope stays on F+5.
+                APP_RunSpectrumK5();
+                gRequestDisplayScreen = DISPLAY_MAIN;
+#else
+                ACTION_BackLightOnDemand();
+#endif
             }
             else {
                 gTxVfo->FrequencyReverse = gTxVfo->FrequencyReverse == false;

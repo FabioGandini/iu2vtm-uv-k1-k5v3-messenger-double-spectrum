@@ -33,7 +33,7 @@
 #include "frequencies.h"
 #include "driver/system.h"
 #include "app/messenger.h"
-#ifdef ENABLE_FMRADIO
+#ifdef ENABLE_FMRADIO_EMBEDDED
 	#include "app/fm.h"
 #endif
 #include "ui/ui.h"
@@ -608,7 +608,7 @@ void MSG_StorePacket(const uint16_t interrupt_bits) {
 // FSK reception (sync detected but FSK_RX_FINISHED never arrives), which
 // otherwise leaves msgStatus == RECEIVING and the squelch open forever
 void MSG_CheckRxTimeout(void) {
-#ifdef ENABLE_FMRADIO
+#ifdef ENABLE_FMRADIO_EMBEDDED
 	// while the broadcast FM radio is playing, the speaker is fed by the
 	// BK1080 and the audio amp GPIO is ON: forcing the BK4819 AF path open
 	// here (the idle AF=FM block below, whose "inaudible" premise assumes a

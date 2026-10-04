@@ -106,10 +106,24 @@ the **same password** can read them. Turn on with **MsgEnc**; set the password
 are. This firmware has **two**:
 
 - **F+5** — the F4HWN/Fagci **bandscope** (scans a frequency range).
-- **F+7** — the kamilsss655 **spectrum with channel-scan mode**: open it while
+- **F+8** — the kamilsss655 **spectrum with channel-scan mode**: open it while
   on a **memory channel** and it scans your saved channels instead of a
   frequency range, showing which ones are active. **KEY_4** toggles between all
   channels and your current scan list; **PTT** jumps to the strongest one.
+  (It replaced the old "backlight on demand" short press of F+8; a long F+8
+  still swaps the frequencies. Up to v2.5 this spectrum was on F+7.)
+
+## 🧩 7b. Overlay apps (F+7)
+
+**What it is (simply):** small add-on programs (Broadcast FM, Fox Hunt, Beacon,
+Beam, Triple VFO, Breakout, Tetris, Plasma, Cube3D) that live in the radio's
+external flash and run in a spare 4 KiB of RAM, so they cost almost nothing in
+the firmware itself. **F+7** (short press) opens the app menu; a long F+7 is
+still VOX. Apps are installed with the host tool (`.app` files, see the
+release). **The FM radio is now an app**: F+0 starts it, and beeps twice if
+the Broadcast FM app is not installed yet.
+
+Apps are trusted native code: only install apps you trust.
 
 ## 🔁 8. Aircopy — clone one radio into another over the air
 

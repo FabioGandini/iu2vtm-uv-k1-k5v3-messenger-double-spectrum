@@ -750,10 +750,10 @@ KEYACTIONS_LIST = ["NONE",             # 0
                   ]
 
 # Actions compiled into the iu2vtm "Custom" preset (a missing action has a
-# NULL handler in the firmware and is refused with a double beep).
+# NULL handler in the firmware and is refused with a double beep). BEAM,
+# FOX HUNT and BEACON are available because the overlay apps are built in.
 KEYACTIONS_AVAILABLE = [a for a in KEYACTIONS_LIST
-                        if a not in ("RxA", "BEAM", "POWER HIGH",
-                                     "REMOVE OFFSET", "FOX HUNT", "BEACON")]
+                        if a not in ("RxA", "POWER HIGH", "REMOVE OFFSET")]
 
 
 class _FwFeatures:

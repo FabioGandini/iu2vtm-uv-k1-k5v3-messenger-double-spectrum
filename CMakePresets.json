@@ -116,7 +116,7 @@
                 "ENABLE_SQUELCH_MORE_SENSITIVE": false,
                 "ENABLE_BYP_RAW_DEMODULATORS": true,
                 "AUTHOR_STRING_2": "IU2VTM",
-                "VERSION_STRING_2": "2.5.0",
+                "VERSION_STRING_2": "2.6.0",
                 "EDITION_STRING": "Kismet",
                 "TARGET": "iu2vtm",
                 "ENABLE_FEAT_F4HWN_K5VIEWER": true,
@@ -124,7 +124,8 @@
                 "ENABLE_FEAT_F4HWN_RXTX_LOG_K5VIEWER": true,
                 "ENABLE_NO_HEAP": true,
                 "ENABLE_FEAT_F4HWN_MULTIBOOT": true,
-                "ENABLE_FEAT_F4HWN_MULTIBOOT_OVERLAY": true
+                "ENABLE_FEAT_F4HWN_MULTIBOOT_OVERLAY": true,
+                "ENABLE_FEAT_F4HWN_OVERLAY_APPS": true
             }
         },
         {
