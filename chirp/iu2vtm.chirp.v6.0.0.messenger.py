@@ -325,40 +325,28 @@ u8  backlight_on_TX_RX:2,
 // --------------------
 
 #seekto 0x00A158;
-struct {
-u8 ENABLE_DTMF_CALLING:1,
-   ENABLE_PWRON_PASSWORD:1,
-   ENABLE_TX1750:1,
-   ENABLE_ALARM:1,
-   ENABLE_VOX:1,
-   ENABLE_VOICE:1,
-   ENABLE_NOAA:1,
-   ENABLE_FMRADIO:1;
-u8 ENABLE_MESSENGER:1,
-   ENABLE_FEAT_F4HWN_RESCUE_OPS:1,
-   ENABLE_BANDSCOPE:1,
-   ENABLE_AM_FIX:1,
-   ENABLE_FEAT_F4HWN_GAME:1,
-   ENABLE_RAW_DEMODULATORS:1,
-   ENABLE_WIDE_RX:1,
-   ENABLE_FLASHLIGHT:1;
-} BUILD_OPTIONS;
+// bytes 0-1: legacy build-options bitmap (no longer written by firmware v6,
+// see FW_FEATURES)
+u8 __LEGACY_BUILD_OPTIONS[2];
 
-// MESSENGER_CONFIG (kamilsss655 port), byte 2 of the F4HWN block
+// byte 2: SET_LCK_t (0 KEYS, 1 KEYS+ACTIONS, 2 KEYS+PTT, 3 KEYS+ACTIONS+PTT)
+u8 set_lck;
+
+// byte 3: MESSENGER_CONFIG (kamilsss655 port, IU2VTM). It used to share
+// byte 2 with set_lck, which made the two settings overwrite each other.
 u8 __MSG_UNUSED1:2,
    msg_modulation:2,
    __MSG_UNUSED2:1,
    msg_encrypt:1,
    msg_ack:1,
    msg_receive:1;
-u8 __UNUSED15;
 
 u8 set_off_tmr:7,
 set_tmr:1;
 
 u8 set_gui:1,
 set_met:1,
-set_lck:1,
+__UNUSED_LCK:1,
 set_inv:1,
 set_contrast:4;
 
@@ -498,7 +486,7 @@ SET_TOT_EOT_LIST = ["OFF", "SOUND", "VISUAL", "ALL"]
 SET_OFF_ON_LIST = ["OFF", "ON"]
 
 # SET_lck f4hwn
-SET_LCK_LIST = ["KEYS", "KEYS+PTT"]
+SET_LCK_LIST = ["KEYS", "KEYS+ACTIONS", "KEYS+PTT", "KEYS+ACTIONS+PTT"]
 
 # SET_MET SET_GUI f4hwn
 SET_MET_LIST = ["TINY", "CLASSIC"]
@@ -730,33 +718,70 @@ DTMF_CODE_CHARS = "ABCD*# "
 DTMF_DECODE_RESPONSE_LIST = ["DO NOTHING", "Local ringing (RING)", "Replay response (REPLY)",
                              "Local ringing + reply response (BOTH)"]
 
-# Base list, positionally matching the first entries of the firmware's
-# ACTION_OPT_t enum. Entries that only exist in some builds (POWER HIGH /
-# REMOVE OFFSET / MESSENGER) are appended dynamically in the correct enum
-# order by _get_keyactions_list(), based on the BUILD_OPTIONS read back
-# from the radio's EEPROM.
-KEYACTIONS_LIST = ["NONE",
-                   "FLASHLIGHT",
-                   "POWER",
-                   "MONITOR",
-                   "SCAN",
-                   "VOX",
-                   "ALARM",
-                   "FM RADIO",
-                   "1750Hz",
-                   "LOCK KEYPAD",
-                   "VFO A / VFO B",
-                   "VFO / MEM",
-                   "MODE",
-                   "BL_MIN_TMP_OFF",
-                   "RX MODE",
-                   "MAIN ONLY",
-                   "PTT",
-                   "WIDE / NARROW",
-                   "BACKLIGHT",
-                   "MUTE",
-                   "RxA"
+# Key actions. The value stored in the radio is the firmware's fixed
+# ACTION_OPT_ ID (upstream F4HWN v6: IDs are persisted in EEPROM and never
+# renumbered), so the INDEX of an entry in this list IS the stored value.
+# Keep in sync with enum ACTION_OPT_t in App/settings.h.
+KEYACTIONS_LIST = ["NONE",             # 0
+                   "FLASHLIGHT",       # 1
+                   "POWER",            # 2
+                   "MONITOR",          # 3
+                   "SCAN",             # 4
+                   "VOX",              # 5
+                   "FM RADIO",         # 6
+                   "1750Hz",           # 7
+                   "LOCK KEYPAD",      # 8
+                   "VFO A / VFO B",    # 9
+                   "VFO / MEM",        # 10
+                   "MODE",             # 11
+                   "RX MODE",          # 12
+                   "MAIN ONLY",        # 13
+                   "PTT",              # 14
+                   "WIDE / NARROW",    # 15
+                   "MUTE",             # 16
+                   "RxA",              # 17
+                   "RF LOG",           # 18
+                   "BEAM",             # 19
+                   "POWER HIGH",       # 20
+                   "REMOVE OFFSET",    # 21
+                   "FOX HUNT",         # 22
+                   "BEACON",           # 23
+                   "MESSENGER"         # 24 (IU2VTM)
                   ]
+
+# Actions compiled into the iu2vtm "Custom" preset (a missing action has a
+# NULL handler in the firmware and is refused with a double beep).
+KEYACTIONS_AVAILABLE = [a for a in KEYACTIONS_LIST
+                        if a not in ("RxA", "BEAM", "POWER HIGH",
+                                     "REMOVE OFFSET", "FOX HUNT", "BEACON")]
+
+
+class _FwFeatures:
+    """Compile-time features of the iu2vtm "Custom" preset.
+
+    Firmware <= v5.x wrote a build-options bitmap at 0xA158 (bytes 0-1) that
+    the driver read back to know which features exist. Upstream v6 no longer
+    writes it, so the flags are fixed here to match CMakePresets.json
+    (preset "Custom"). Update this class if the preset changes."""
+    ENABLE_DTMF_CALLING = False
+    ENABLE_PWRON_PASSWORD = False
+    ENABLE_TX1750 = True
+    ENABLE_ALARM = False
+    ENABLE_VOX = True
+    ENABLE_VOICE = False
+    ENABLE_NOAA = False
+    ENABLE_FMRADIO = True
+    ENABLE_MESSENGER = True
+    ENABLE_FEAT_F4HWN_RESCUE_OPS = False
+    ENABLE_BANDSCOPE = True
+    ENABLE_AM_FIX = False
+    ENABLE_FEAT_F4HWN_GAME = False
+    ENABLE_RAW_DEMODULATORS = True
+    ENABLE_WIDE_RX = True
+    ENABLE_FLASHLIGHT = True
+
+
+FW_FEATURES = _FwFeatures()
 
 MIC_GAIN_LIST = ["+1.5dB", "+4.0dB", "+8.0dB", "+12.0dB", "+16.0dB", "+20.0dB", "+24.0dB", "+28.0dB", "+31.5dB"]
 
@@ -1071,7 +1096,7 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
     upload_advanced = False
 
     def _get_bands(self):
-        is_wide = self._memobj.BUILD_OPTIONS.ENABLE_WIDE_RX \
+        is_wide = FW_FEATURES.ENABLE_WIDE_RX \
             if self._memobj is not None else True
         bands = BANDS_WIDE if is_wide else BANDS_STANDARD
         return bands
@@ -1378,7 +1403,7 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
 
             val = RadioSettingValueBoolean(False)
             rs = RadioSetting("dtmfdecode", "DTMF decode", val)
-#            if self._memobj.BUILD_OPTIONS.ENABLE_DTMF_CALLING:
+#            if FW_FEATURES.ENABLE_DTMF_CALLING:
 #                mem.extra.append(rs)
 
             val = RadioSettingValueList(COMPANDER_LIST)
@@ -1513,7 +1538,7 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
         # DTMF DECODE
         val = RadioSettingValueBoolean(_mem.dtmf_decode)
         rs = RadioSetting("dtmfdecode", "DTMF decode (D Decd)", val)
-#        if self._memobj.BUILD_OPTIONS.ENABLE_DTMF_CALLING:
+#        if FW_FEATURES.ENABLE_DTMF_CALLING:
 #            mem.extra.append(rs)
 
         # Compander
@@ -1530,15 +1555,8 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
         return mem
 
     def _get_keyactions_list(self):
-        """Build the key action list positionally matching this
-        firmware's ACTION_OPT_t enum, appending the build-dependent
-        entries in the same order as the C enum."""
-        lst = list(KEYACTIONS_LIST)
-        if self._memobj.BUILD_OPTIONS.ENABLE_FEAT_F4HWN_RESCUE_OPS:
-            lst += ["POWER HIGH", "REMOVE OFFSET"]
-        if self._memobj.BUILD_OPTIONS.ENABLE_MESSENGER:
-            lst += ["MESSENGER"]
-        return lst
+        """Full key action list: index == fixed firmware ACTION_OPT_ ID."""
+        return list(KEYACTIONS_LIST)
 
     def set_settings(self, settings):
         _mem = self._memobj
@@ -2000,11 +2018,11 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
         top.append(advanced)
         top.append(keya)
         top.append(dtmf)
-#        if _mem.BUILD_OPTIONS.ENABLE_DTMF_CALLING:
+#        if FW_FEATURES.ENABLE_DTMF_CALLING:
 #            top.append(dtmfc)
         top.append(scanl)
         top.append(unlock)
-        if _mem.BUILD_OPTIONS.ENABLE_FMRADIO:
+        if FW_FEATURES.ENABLE_FMRADIO:
             top.append(fmradio)
         top.append(roinfo)
         top.append(calibration)
@@ -2023,29 +2041,9 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
 
         # Programmable keys
         def get_action(action_num):
-            """"get actual key action"""
-            has_alarm = self._memobj.BUILD_OPTIONS.ENABLE_ALARM
-            has_1750 = self._memobj.BUILD_OPTIONS.ENABLE_TX1750
-            has_flashlight = self._memobj.BUILD_OPTIONS.ENABLE_FLASHLIGHT
-            has_fm_radio = self._memobj.BUILD_OPTIONS.ENABLE_FMRADIO
-            has_game = self._memobj.BUILD_OPTIONS.ENABLE_FEAT_F4HWN_GAME
-            has_vox = self._memobj.BUILD_OPTIONS.ENABLE_VOX
-
+            """get actual key action (stored value == firmware ACTION_OPT_ ID)"""
             full_list = self._get_keyactions_list()
-            lst = full_list.copy()
-            lst.remove("BACKLIGHT") # Only for key press on TX
-            lst.remove("BL_MIN_TMP_OFF")
-
-            if not has_alarm:
-                lst.remove("ALARM")
-            if not has_1750:
-                lst.remove("1750Hz")
-            if not has_flashlight:
-                lst.remove("FLASHLIGHT")
-            if not has_fm_radio:
-                lst.remove("FM RADIO")
-            if not has_vox:
-                lst.remove("MUTE")
+            lst = [a for a in full_list if a in KEYACTIONS_AVAILABLE]
 
             action_num = int(action_num)
             if action_num >= len(full_list) or \
@@ -2322,7 +2320,7 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
             ch_list.append("Channel M" + str(ch))
         for bnd in range(1, 8):
             ch_list.append("Band F" + str(bnd))
-        if _mem.BUILD_OPTIONS.ENABLE_NOAA:
+        if FW_FEATURES.ENABLE_NOAA:
             for bnd in range(1, 11):
                 ch_list.append("NOAA N" + str(bnd))
 
@@ -2405,8 +2403,12 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
         # Set_lck, uses
         tmpsetlck = list_def(_mem.set_lck, SET_LCK_LIST, 0)
         val = RadioSettingValueList(SET_LCK_LIST, SET_LCK_LIST[tmpsetlck])
-        SetLckSetting = RadioSetting("set_lck", "Lock PTT Key When Keypad Is Locked (SetLck)", val)
-        SetLckSetting.set_doc('SetLck: When the keypad is locked, lock also the PTT key')
+        SetLckSetting = RadioSetting("set_lck", "Keypad Lock Scope (SetLck)", val)
+        SetLckSetting.set_doc('SetLck: What the keypad lock also locks besides the keys:\n' + \
+                              '* KEYS : keypad only\n' + \
+                              '* KEYS+ACTIONS : keypad and programmable side-key actions\n' + \
+                              '* KEYS+PTT : keypad and PTT\n' + \
+                              '* KEYS+ACTIONS+PTT : all of them')
         
         # Set_met f4hwn
         tmpsetmet = list_def(_mem.set_met, SET_MET_LIST, 0)
@@ -3269,12 +3271,12 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
         basic.append(SetNFMSetting)
         basic.append(SetRxAFMSetting)
         basic.append(SetRxAAMSetting)
-        if _mem.BUILD_OPTIONS.ENABLE_FEAT_F4HWN_RESCUE_OPS:
+        if FW_FEATURES.ENABLE_FEAT_F4HWN_RESCUE_OPS:
             basic.append(SetKEYSetting)
         basic.append(SetScnSetting)
-        if _mem.BUILD_OPTIONS.ENABLE_FEAT_F4HWN_RESCUE_OPS:
+        if FW_FEATURES.ENABLE_FEAT_F4HWN_RESCUE_OPS:
             basic.append(SetMenuLockSetting)
-        if _mem.BUILD_OPTIONS.ENABLE_MESSENGER:
+        if FW_FEATURES.ENABLE_MESSENGER:
             basic.append(MsgRxSetting)
             basic.append(MsgAckSetting)
             basic.append(MsgEncSetting)
@@ -3295,9 +3297,9 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
         basic.append(bat_save_setting)
         basic.append(scn_rev_setting)
         
-        if _mem.BUILD_OPTIONS.ENABLE_NOAA:
+        if FW_FEATURES.ENABLE_NOAA:
             basic.append(noaa_auto_scan_setting)
-        if _mem.BUILD_OPTIONS.ENABLE_AM_FIX:
+        if FW_FEATURES.ENABLE_AM_FIX:
             basic.append(am_fix_setting)
 
         append_label(basic,
@@ -3321,16 +3323,16 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
         append_label(basic, "=" * 6 + " Audio related settings "
                      + "=" * 300, "=" * 300)
 
-        if _mem.BUILD_OPTIONS.ENABLE_VOX:
+        if FW_FEATURES.ENABLE_VOX:
             basic.append(vox_setting)
         basic.append(mic_gain_setting)
         basic.append(beep_setting)
         basic.append(roger_setting)
         basic.append(ste_setting)
         basic.append(rp_ste_setting)
-        if _mem.BUILD_OPTIONS.ENABLE_VOICE:
+        if FW_FEATURES.ENABLE_VOICE:
             basic.append(voice_setting)
-        if _mem.BUILD_OPTIONS.ENABLE_ALARM:
+        if FW_FEATURES.ENABLE_ALARM:
             basic.append(alarm_setting)
 
         append_label(basic, "=" * 6 + " Radio state " + "=" * 300, "=" * 300)
@@ -3341,17 +3343,17 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
         basic.append(keypad_lock_setting)
 
 #        advanced.append(freq_mode_allowed_setting)
-#        if _mem.BUILD_OPTIONS.ENABLE_PWRON_PASSWORD:
+#        if FW_FEATURES.ENABLE_PWRON_PASSWORD:
 #            advanced.append(pswd_setting)
 
-#        if _mem.BUILD_OPTIONS.ENABLE_DTMF_CALLING:
+#        if FW_FEATURES.ENABLE_DTMF_CALLING:
 #            dtmf.append(sep_code_setting)
 #            dtmf.append(group_code_setting)
         dtmf.append(first_code_per_setting)
         dtmf.append(spec_per_setting)
         dtmf.append(code_per_setting)
         dtmf.append(code_int_setting)
-#        if _mem.BUILD_OPTIONS.ENABLE_DTMF_CALLING:
+#        if FW_FEATURES.ENABLE_DTMF_CALLING:
 #            dtmf.append(ani_id_setting)
         dtmf.append(up_code_setting)
         dtmf.append(dw_code_setting)
@@ -3359,7 +3361,7 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
         dtmf.append(dtmf_side_tone_setting)
         dtmf.append(d_live_setting)
         
-#        if _mem.BUILD_OPTIONS.ENABLE_DTMF_CALLING:
+#        if FW_FEATURES.ENABLE_DTMF_CALLING:
 #            dtmf.append(dtmf_resp_setting)
 #            dtmf.append(d_hold_setting)
 #            dtmf.append(perm_kill_setting)

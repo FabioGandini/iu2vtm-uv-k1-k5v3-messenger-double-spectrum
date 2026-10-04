@@ -124,7 +124,7 @@ messenger.
 
 ## 💻 9. CHIRP driver
 
-A modified CHIRP driver (`chirp/iu2vtm.chirp.v5.5.0.messenger.py`) lets you set
+A modified CHIRP driver (`chirp/iu2vtm.chirp.v6.0.0.messenger.py`) lets you set
 the messenger options from a PC: receive on/off (**MsgRX**), ACK (**MsgACK**),
 modulation (**MsgMod**), encryption (**MsgEnc**), the password (**EncKey**) and
 your **callsign**. Load it in CHIRP, then "Download from radio".

@@ -455,9 +455,12 @@ gEeprom.FreqChannel[1]   = IS_FREQ_CHANNEL(Data16[5]) ? Data16[5] : (FREQ_CHANNE
         // TODO: address TBD
         PY25Q16_ReadBuffer(0x00A158, Data, 8);
 #ifdef ENABLE_MESSENGER
-        // byte 2: bytes 0-1 hold the build options bitmap, rewritten on
-        // every boot by SETTINGS_WriteBuildOptions()
-        gEeprom.MESSENGER_CONFIG.__val = (Data[2] == 0xFF) ? 0x01 : Data[2];
+        // byte 3 of the 0xA158 block (IU2VTM): byte 2 belongs to set_lck
+        // (keypad lock scope), bytes 0-1 are legacy build options no longer
+        // written by upstream v6. Reserved bits (3, 6, 7) must be clear: a
+        // non-zero value means the byte is erased/stale, so use the default
+        // (messenger RX on, ACK/encryption off).
+        gEeprom.MESSENGER_CONFIG.__val = ((Data[3] & 0xC8) != 0) ? 0x01 : Data[3];
 #endif
         const uint8_t set_ptt_scn_sav = Data[7] & 0x0F;
         const bool set_ptt_scn_sav_erased = Data[7] == 0xFF;
@@ -1118,8 +1121,8 @@ void SETTINGS_SaveSettings(void)
     //memset(State, 0xFF, sizeof(State));
 
 #ifdef ENABLE_MESSENGER
-    // byte 2: bytes 0-1 belong to the build options bitmap
-    State[2] = gEeprom.MESSENGER_CONFIG.__val;
+    // byte 3 (IU2VTM): byte 2 is set_lck, written below
+    State[3] = gEeprom.MESSENGER_CONFIG.__val;
 #endif
 
     /*

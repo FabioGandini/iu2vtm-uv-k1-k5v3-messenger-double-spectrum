@@ -121,7 +121,10 @@
                 "TARGET": "iu2vtm",
                 "ENABLE_FEAT_F4HWN_K5VIEWER": true,
                 "ENABLE_FEAT_F4HWN_RXTX_LOG": true,
-                "ENABLE_FEAT_F4HWN_RXTX_LOG_K5VIEWER": true
+                "ENABLE_FEAT_F4HWN_RXTX_LOG_K5VIEWER": true,
+                "ENABLE_NO_HEAP": true,
+                "ENABLE_FEAT_F4HWN_MULTIBOOT": true,
+                "ENABLE_FEAT_F4HWN_MULTIBOOT_OVERLAY": true
             }
         },
         {
