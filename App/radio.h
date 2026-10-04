@@ -50,7 +50,6 @@ enum VfoState_t
     VFO_STATE_BAT_LOW,
     VFO_STATE_TX_DISABLE,
     VFO_STATE_TIMEOUT,
-    VFO_STATE_ALARM,
     VFO_STATE_VOLTAGE_HIGH,
     _VFO_STATE_LAST_ELEMENT
 };
@@ -148,6 +147,9 @@ extern VFO_Info_t    *gCurrentVfo;
 extern DCS_CodeType_t gCurrentCodeType;
 
 extern VfoState_t     VfoState[2];
+
+// Human-readable label per VfoState_t (defined in ui/main.c), e.g. "TX DISABLE".
+extern const char *const VfoStateStr[];
 
 bool     RADIO_CheckValidList(uint8_t scanList);
 void     RADIO_NextValidList(int8_t direction);

@@ -17,12 +17,11 @@
 #include "driver/bk4819-regs.h"
 #include <string.h>
 
-#include "am_fix.h"
 #include "app/dtmf.h"
 #ifdef ENABLE_FEAT_F4HWN_RXTX_LOG
     #include "app/rxtx_log.h"
 #endif
-#ifdef ENABLE_FMRADIO
+#ifdef ENABLE_FMRADIO_EMBEDDED
     #include "app/fm.h"
 #endif
 #ifdef ENABLE_MESSENGER
@@ -770,12 +769,7 @@ void RADIO_SetupRegisters(bool switchToForeground)
             case BK4819_FILTER_BW_WIDE:
             case BK4819_FILTER_BW_NARROW:
             case BK4819_FILTER_BW_NARROWER:
-                #ifdef ENABLE_AM_FIX
-    //              BK4819_SetFilterBandwidth(Bandwidth, gRxVfo->Modulation == MODULATION_AM && gSetting_AM_fix);
-                    BK4819_SetFilterBandwidth(Bandwidth, true);
-                #else
-                    BK4819_SetFilterBandwidth(Bandwidth, false);
-                #endif
+                BK4819_SetFilterBandwidth(Bandwidth, false);
                 break;
         }
     }
@@ -896,7 +890,7 @@ void RADIO_SetupRegisters(bool switchToForeground)
 #ifdef ENABLE_NOAA
         && !IS_NOAA_CHANNEL(gCurrentVfo->CHANNEL_SAVE)
 #endif
-#ifdef ENABLE_FMRADIO
+#ifdef ENABLE_FMRADIO_EMBEDDED
         && !gFmRadioMode
 #endif
     ){
@@ -1023,12 +1017,7 @@ void RADIO_SetTxParameters(void)
         case BK4819_FILTER_BW_WIDE:
         case BK4819_FILTER_BW_NARROW:
         case BK4819_FILTER_BW_NARROWER:
-            #ifdef ENABLE_AM_FIX
-//              BK4819_SetFilterBandwidth(Bandwidth, gCurrentVfo->Modulation == MODULATION_AM && gSetting_AM_fix);
-                BK4819_SetFilterBandwidth(Bandwidth, true);
-            #else
-                BK4819_SetFilterBandwidth(Bandwidth, false);
-            #endif
+            BK4819_SetFilterBandwidth(Bandwidth, false);
             break;
     }
 
@@ -1179,14 +1168,6 @@ void RADIO_SetupAGC(bool listeningAM, bool disable)
         return;
     lastSettings = newSettings;
 
-#ifdef ENABLE_AM_FIX
-    if (listeningAM && gSetting_AM_fix) {
-        BK4819_SetAGC(0);
-        AM_fix_enable(!disable);
-        return;
-    }
-#endif
-
     BK4819_SetAGC(!disable);
     BK4819_InitAGC(listeningAM);
 }
@@ -1238,9 +1219,6 @@ void RADIO_PrepareTX(void)
 #ifdef ENABLE_FEAT_F4HWN
         && gCurrentVfo->TX_LOCK == true
 #endif
-#if defined(ENABLE_ALARM) || defined(ENABLE_TX1750)
-        && gAlarmState != ALARM_STATE_SITE_ALARM
-#endif
     ){
         // TX frequency not allowed
         State = VFO_STATE_TX_DISABLE;
@@ -1264,19 +1242,17 @@ void RADIO_PrepareTX(void)
         State = VFO_STATE_TX_DISABLE;
     }
 #endif
-#ifndef ENABLE_TX_WHEN_AM
     else if (gCurrentVfo->Modulation != MODULATION_FM) {
-        // not allowed to TX if in AM mode
+        // AM and other non-FM modes are receive-only.
         State = VFO_STATE_TX_DISABLE;
     }
-#endif
 
     if (State != VFO_STATE_NORMAL) {
         // TX not allowed
         RADIO_SetVfoState(State);
 
-#if defined(ENABLE_ALARM) || defined(ENABLE_TX1750)
-        gAlarmState = ALARM_STATE_OFF;
+#ifdef ENABLE_TX1750
+        gTx1750Active = false;
 #endif
 
 #ifdef ENABLE_DTMF_CALLING
@@ -1310,8 +1286,8 @@ void RADIO_PrepareTX(void)
 
     gTxTimerCountdown_500ms = 0;            // no timeout
 
-    #if defined(ENABLE_ALARM) || defined(ENABLE_TX1750)
-    if (gAlarmState == ALARM_STATE_OFF)
+    #ifdef ENABLE_TX1750
+    if (!gTx1750Active)
     #endif
     {
 

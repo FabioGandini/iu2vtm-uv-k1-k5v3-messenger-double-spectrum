@@ -20,6 +20,7 @@
 #include "driver/py25q16.h"
 #include "driver/st7565.h"
 #include "external/printf/printf.h"
+#include "font.h"
 #include "helper/battery.h"
 #include "settings.h"
 #include "misc.h"
@@ -114,15 +115,10 @@ extern uint8_t _edata;          // End of .data in RAM
 extern uint8_t _sbss;           // Start of .bss in RAM
 extern uint8_t _ebss;           // End of .bss in RAM
 
-// _eflash_used must be defined in the linker script immediately after the last
-// section with a FLASH load address (after .noncacheable). Example:
-//
-//   .noncacheable : {
-//       ...
-//   } > RAM AT> FLASH
-//   _eflash_used = LOADADDR(.noncacheable) + SIZEOF(.noncacheable);
-//
-// This gives the exact byte count that the linker reports as FLASH used.
+// _eflash_used is defined by the linker at the end of the final section with a
+// FLASH load image. This is currently .mb_ramfunc (empty without the overlay),
+// after the load images for .data and .noncacheable. It therefore gives the
+// exact byte count that the linker reports as FLASH used.
 extern uint8_t _eflash_used;
 
 // Absolute symbols: their *address* IS the numeric size value (ARM/CMSIS convention).
@@ -151,8 +147,8 @@ static void build_usage(uint32_t* ram_used, uint32_t* flash_used)
     const uint32_t stack_size = (uint32_t)(uintptr_t)&_Min_Stack_Size;
     *ram_used = span(&_sdata, &_ebss) + heap_size + stack_size;
 
-    // FLASH: _eflash_used is placed by the linker script right after the last
-    // section copied to FLASH (.data LMA + .noncacheable LMA).
+    // FLASH: _eflash_used follows the final FLASH load image (.mb_ramfunc,
+    // after the .data and .noncacheable load images).
     // Note: _etext is NOT usable here because this linker script places .rodata
     // sections AFTER _etext, making it an unreliable end-of-flash marker.
     *flash_used = span((void*)FLASH_BASE, &_eflash_used);
@@ -259,15 +255,17 @@ void UI_DisplayWelcome(void)
     }
 #endif
     else {
-        char WelcomeString0[16];
-        char WelcomeString1[16];
+        char WelcomeString0[17];
+        char WelcomeString1[17];
         char WelcomeString2[16];
         char WelcomeString3[32];
 
         // 0x0EB0
-        PY25Q16_ReadBuffer(0x00A0C8, WelcomeString0, 16);
+        PY25Q16_ReadBuffer(SETTINGS_BOOT_MESSAGE_LINE1_ADDR, WelcomeString0, 16);
+        WelcomeString0[16] = '\0';
         // 0x0EC0
-        PY25Q16_ReadBuffer(0x00A0D8, WelcomeString1, 16);
+        PY25Q16_ReadBuffer(SETTINGS_BOOT_MESSAGE_LINE2_ADDR, WelcomeString1, 16);
+        WelcomeString1[16] = '\0';
 
         sprintf(WelcomeString2, "%u.%02uV %u%%",
                 gBatteryVoltageAverage / 100,
@@ -312,17 +310,33 @@ void UI_DisplayWelcome(void)
         UI_PrintString(WelcomeString1, 0, 127, 2, 10);
 
 #ifdef ENABLE_FEAT_F4HWN
-        UI_PrintStringSmallNormal(Version, 0, 128, 4);
+        const size_t version_width = strlen(DisplayVersion) * (ARRAY_SIZE(gFontSmall[0]) + 1u);
+        const uint8_t version_x = version_width < LCD_WIDTH
+            ? (uint8_t)((LCD_WIDTH - version_width + 1u) / 2u)
+            : 0u;
+        const uint8_t capsule_left = version_x > 2u ? (uint8_t)(version_x - 3u) : 0u;
+        const size_t capsule_right_candidate = version_x + version_width + 2u;
+        const uint8_t capsule_right = capsule_right_candidate < LCD_WIDTH
+            ? (uint8_t)capsule_right_candidate
+            : (LCD_WIDTH - 1u);
 
-        UI_DrawLineBuffer(gFrameBuffer, 0, 35, 18, 35, 1);
-        gFrameBuffer[4][19] ^= 0x7F;
-        for (uint8_t x = 20; x < 108; x++)
+        UI_PrintStringSmallNormal(DisplayVersion, version_x, 0, 4);
+
+        if (capsule_left > 0u)
+        {
+            UI_DrawLineBuffer(gFrameBuffer, 0, 35, capsule_left - 1u, 35, 1);
+        }
+        gFrameBuffer[4][capsule_left] ^= 0x7F;
+        for (uint8_t x = capsule_left + 1u; x < capsule_right; x++)
         {
             gFrameBuffer[4][x] ^= 0xFF;
             gFrameBuffer[3][x] ^= 0x80;
         }
-        gFrameBuffer[4][108] ^= 0x7F;
-        UI_DrawLineBuffer(gFrameBuffer, 109, 35, 127, 35, 1);
+        gFrameBuffer[4][capsule_right] ^= 0x7F;
+        if (capsule_right < LCD_WIDTH - 1u)
+        {
+            UI_DrawLineBuffer(gFrameBuffer, capsule_right + 1u, 35, LCD_WIDTH - 1u, 35, 1);
+        }
 
         /*
         #ifdef ENABLE_FEAT_F4HWN_MEM

@@ -18,6 +18,9 @@
 #include <stdlib.h>  // abs()
 
 #include "app/app.h"
+#ifdef ENABLE_FEAT_F4HWN_ACTION_PICKER
+    #include "app/action.h"
+#endif
 #include "app/chFrScanner.h"
 #include "app/dtmf.h"
 
@@ -25,9 +28,6 @@
     #include "app/beam.h"
 #endif
 
-#ifdef ENABLE_AM_FIX
-    #include "am_fix.h"
-#endif
 #include "bitmaps.h"
 #include "board.h"
 #include "driver/bk4819.h"
@@ -68,6 +68,10 @@ center_line_t center_line = CENTER_LINE_NONE;
 
 #ifdef ENABLE_FEAT_F4HWN_SCAN_PROGRESS
 #define SCAN_PROGRESS_MR_CHANNEL_BYTES ((MR_CHANNELS_MAX + 7u) / 8u)
+// Scan-list name hold, in 10 ms ticks. Counted down on the 10 ms timeslice (not the
+// 500 ms one) so the hold is accurate to a single tick instead of +/- 500 ms. Stored
+// in a uint8_t, so the practical ceiling is 255 ticks = 2.55 s.
+#define SCAN_LIST_NAME_HOLD_10MS        (1000u / 10u)
 
 static bool     gScanProgressSessionActive;
 static bool     gScanProgressSessionIsMemory;
@@ -82,6 +86,7 @@ static bool     gScanProgressPrevResetVfosFlag;
 static bool     gScanProgressForceRebuild;
 static uint16_t gScanProgressLastMemoryIndex;
 static uint8_t  gScanProgressPriorityState;
+static uint8_t  gScanListNameCountdown_10ms;
 #define SCAN_PROGRESS_PRIORITY_LABEL_MASK 0x03u
 #define SCAN_PROGRESS_PRIORITY_SEEN_SHIFT 2
 #define SCAN_PROGRESS_PRIORITY_SEEN_MASK  0x1cu
@@ -90,15 +95,24 @@ static uint8_t  gScanProgressPriorityState;
 #define SCAN_PROGRESS_PRIORITY_HOLD_FRAMES 6
 #endif
 
+#if defined(ENABLE_FEAT_F4HWN_BEAM) || defined(ENABLE_FEAT_F4HWN_SCAN_PROGRESS)
+// Shared center-line renderer: clear the line and print bold text on it.
+static void UI_MAIN_DrawCenterBoldLine(const char *text, uint8_t start)
+{
+#ifdef ENABLE_FEAT_F4HWN
+    const uint8_t line = isMainOnly() ? 5 : 3;
+#else
+    const uint8_t line = 3;
+#endif
+    memset(gFrameBuffer[line], 0, LCD_WIDTH);
+    UI_PrintStringSmallBold(text, start, LCD_WIDTH - 1, line);
+}
+#endif
+
 #ifdef ENABLE_FEAT_F4HWN_BEAM
 static void UI_MAIN_DrawBeamLine(void)
 {
     const char *text;
-#ifdef ENABLE_FEAT_F4HWN
-    const unsigned int line = isMainOnly() ? 5 : 3;
-#else
-    const unsigned int line = 3;
-#endif
 
     switch (gBeamStatus) {
     case BEAM_STATUS_TX_WAIT:
@@ -125,18 +139,16 @@ static void UI_MAIN_DrawBeamLine(void)
         break;
     }
 
-    memset(gFrameBuffer[line], 0, LCD_WIDTH);
-    UI_PrintStringSmallBold(text, 2, 127, line);
+    UI_MAIN_DrawCenterBoldLine(text, 2);
 }
 #endif
 
-const char *VfoStateStr[] = {
+const char *const VfoStateStr[] = {
        [VFO_STATE_NORMAL]="",
        [VFO_STATE_BUSY]="BUSY",
        [VFO_STATE_BAT_LOW]="BAT LOW",
        [VFO_STATE_TX_DISABLE]="TX DISABLE",
        [VFO_STATE_TIMEOUT]="TIMEOUT",
-       [VFO_STATE_ALARM]="ALARM",
        [VFO_STATE_VOLTAGE_HIGH]="VOLT HIGH"
 };
 
@@ -214,12 +226,34 @@ static void ScanProgress_ResetSession(void)
     gScanProgressForceRebuild = false;
     gScanProgressLastMemoryIndex = 0;
     gScanProgressPriorityState = 0;
+    gScanListNameCountdown_10ms = 0;
 }
 
 void UI_MAIN_NotifyScanProgressDataChanged(void)
 {
     gScanProgressForceRebuild = true;
     gUpdateStatus = true;
+}
+
+void UI_MAIN_NotifyScanListChanged(void)
+{
+    UI_MAIN_NotifyScanProgressDataChanged();
+    gScanListNameCountdown_10ms = SCAN_LIST_NAME_HOLD_10MS;
+    gUpdateDisplay = true;
+}
+
+// True while the "SCAN LIST xxx" name actually occupies the screen. Used to
+// freeze the scan so it does not race ahead of the (hidden) progress gauge,
+// which would make the bar snap forward when it reappears.
+//
+// The IS_MR_CHANNEL() test mirrors show_memory in UI_DrawScanProgress(): the
+// name is only ever drawn during a memory (channel) scan. A frequency/range
+// scan can still arm the countdown (F + UP/DOWN cycles lists on any scan), but
+// no name is shown there, so it must NOT be held - otherwise the scanner would
+// stall ~2 s with nothing on screen to explain the pause.
+bool UI_MAIN_ShouldHoldScanResume(void)
+{
+    return gScanListNameCountdown_10ms > 0 && IS_MR_CHANNEL(gNextMrChannel);
 }
 
 static inline void ScanProgress_SetBit(uint8_t *map, uint16_t ch)
@@ -241,6 +275,33 @@ static uint8_t ScanProgress_GetActiveScanList(void)
         scan_list = max_scan_list;
 
     return scan_list;
+}
+
+static void UI_MAIN_DrawScanListName(void)
+{
+    const uint8_t scan_list = ScanProgress_GetActiveScanList();
+    char text[16];
+
+    // Manual formatting instead of snprintf: much smaller on a divide-less M0 core
+    strcpy(text, "SCAN LIST ");
+    char *p = text + 10;                     // sizeof("SCAN LIST ") - 1
+
+    if (scan_list > MR_CHANNELS_LIST) {
+        *p++ = 'A'; *p++ = 'L'; *p++ = 'L';
+    } else {
+        const char *name = gListName[scan_list - 1];
+
+        if (IsEmptyName(name, sizeof(gListName[0]))) {
+            *p++ = (char)('0' + scan_list / 10);
+            *p++ = (char)('0' + scan_list % 10);
+        } else {
+            for (uint8_t i = 0; i < 3 && name[i]; i++)
+                *p++ = name[i];
+        }
+    }
+    *p = '\0';
+
+    UI_MAIN_DrawCenterBoldLine(text, 0);
 }
 
 static bool ScanProgress_ChannelBelongsToList(uint16_t channel, const ChannelAttributes_t *att, uint8_t scan_list)
@@ -488,6 +549,12 @@ static bool UI_DrawScanProgress(void)
     if (!show_memory && !show_range) {
         ScanProgress_ResetSession();
         return false;
+    }
+
+    // Right after a scan-list change, briefly show its name instead of the progress bar
+    if (show_memory && gScanListNameCountdown_10ms > 0) {
+        UI_MAIN_DrawScanListName();
+        return true;
     }
 
     if (show_memory) {
@@ -750,8 +817,8 @@ void UI_DisplayAudioBar(void)
             return;  // screen is in use
         }
 
-#if defined(ENABLE_ALARM) || defined(ENABLE_TX1750)
-        if (gAlarmState != ALARM_STATE_OFF)
+#ifdef ENABLE_TX1750
+        if (gTx1750Active)
             return;
 #endif
         static uint8_t barsOld = 0;
@@ -779,15 +846,14 @@ void UI_DisplayAudioBar(void)
 }
 #endif
 
-#ifdef ENABLE_FEAT_F4HWN_AUDIO_SCOPE
-
+#if defined(ENABLE_FEAT_F4HWN_AUDIO_SCOPE) || defined(ENABLE_FEAT_F4HWN_OVERLAY_APPS)
 #define SCOPE_SAMPLES        43   // number of columns (43 × 3px = 128px wide)
 #define SCOPE_NOISE_GATE     50u  // minimum range below which the display shows baseline
 #define SCOPE_FLOOR_RISE     2u   // floor rise per frame (+100 units/s at 20ms/frame)
 #define SCOPE_FLOOR_DROP_SHR 3u   // floor drop IIR shift: drop by (floor-min) >> N per frame (~160ms to halve)
 #define SCOPE_VOLUME_MIN     200u // let's assume that the sound level in silence is 200
 
-void UI_DisplayAudioScope(void)
+void UI_DisplayAudioScopeOverlay(const uint8_t line, const bool active)
 {
     static uint16_t g_scope_buf[SCOPE_SAMPLES];
     static uint8_t  g_scope_write      = 0;
@@ -801,21 +867,10 @@ void UI_DisplayAudioScope(void)
 
     static bool s_was_tx = false;
 
-    if (gCurrentFunction != FUNCTION_TRANSMIT) {
+    if (!active) {
         s_was_tx = false;
         return;
     }
-
-    // This prevents a sudden spike on the bar caused by release the PTT button
-    if (!GPIO_IsPttPressed()
-#ifdef ENABLE_VOX
-    && !gEeprom.VOX_SWITCH
-#endif
-#ifdef ENABLE_FEAT_F4HWN
-    && !gSetting_set_ptt_session
-#endif
-    )
-    return;
 
     if (!s_was_tx) {
         // TX entry: full reset so every new transmission starts from a clean state
@@ -838,32 +893,6 @@ void UI_DisplayAudioScope(void)
         g_scope_buf[g_scope_write] =  SCOPE_VOLUME_MIN;
 
     g_scope_write = (g_scope_write + 1u) % SCOPE_SAMPLES;
-
-// --------------------------------- Refresh display ---------------------------------
-
-    if (gLowBattery && !gLowBatteryConfirmed)
-        return;
-
-    if (gScreenToDisplay != DISPLAY_MAIN
-#ifdef ENABLE_DTMF_CALLING
-        || gDTMF_CallState != DTMF_CALL_STATE_NONE
-#endif
-        )
-        return;
-
-#if defined(ENABLE_ALARM) || defined(ENABLE_TX1750)
-    if (gAlarmState != ALARM_STATE_OFF)
-        return;
-#endif
-
-#ifdef ENABLE_FEAT_F4HWN
-    RxBlinkLed = 0;
-    RxBlinkLedCounter = 0;
-    BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, false);
-    const unsigned int line = isMainOnly() ? 5 : 3;
-#else
-    const unsigned int line = 3;
-#endif
 
     uint8_t *p_line = gFrameBuffer[line];
     memset(p_line, 0, LCD_WIDTH);
@@ -904,9 +933,50 @@ void UI_DisplayAudioScope(void)
 
     }
 
+}
+
+#ifdef ENABLE_FEAT_F4HWN_AUDIO_SCOPE
+void UI_DisplayAudioScope(void)
+{
+    const unsigned int line = isMainOnly() ? 5u : 3u;
+
+    /* Keep MAIN's original gating and side effects outside the shared renderer. */
+    if (gCurrentFunction != FUNCTION_TRANSMIT) {
+        UI_DisplayAudioScopeOverlay((uint8_t)line, false);
+        return;
+    }
+    if (!GPIO_IsPttPressed()
+#ifdef ENABLE_VOX
+        && !gEeprom.VOX_SWITCH
+#endif
+#ifdef ENABLE_FEAT_F4HWN
+        && !gSetting_set_ptt_session
+#endif
+        )
+        return;
+    if (gLowBattery && !gLowBatteryConfirmed)
+        return;
+    if (gScreenToDisplay != DISPLAY_MAIN
+#ifdef ENABLE_DTMF_CALLING
+        || gDTMF_CallState != DTMF_CALL_STATE_NONE
+#endif
+        )
+        return;
+#ifdef ENABLE_TX1750
+    if (gTx1750Active)
+        return;
+#endif
+
+#ifdef ENABLE_FEAT_F4HWN
+    RxBlinkLed = 0;
+    RxBlinkLedCounter = 0;
+    BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, false);
+#endif
+    UI_DisplayAudioScopeOverlay((uint8_t)line, true);
     ST7565_BlitLine(line);
 }
-#endif  // ENABLE_FEAT_F4HWN_AUDIO_SCOPE
+#endif
+#endif  // ENABLE_FEAT_F4HWN_AUDIO_SCOPE || ENABLE_FEAT_F4HWN_OVERLAY_APPS
 
 void DisplayRSSIBar(const bool now)
 {
@@ -1007,9 +1077,6 @@ void DisplayRSSIBar(const bool now)
 #ifdef ENABLE_FEAT_F4HWN
     int16_t rssi_dBm =
         BK4819_GetRSSI_dBm()
-#ifdef ENABLE_AM_FIX
-        + ((gSetting_AM_fix && gRxVfo->Modulation == MODULATION_AM) ? AM_fix_get_gain_diff() : 0)
-#endif
         + dBmCorrTable[gRxVfo->Band];
 
     // IARU VHF/UHF S-meter: S9 = -93 dBm, 1 S-unit = 6 dB
@@ -1046,9 +1113,6 @@ void DisplayRSSIBar(const bool now)
     const int16_t s0_dBm   = -gEeprom.S0_LEVEL;                  // S0 .. base level
     const int16_t rssi_dBm =
         BK4819_GetRSSI_dBm()
-#ifdef ENABLE_AM_FIX
-        + ((gSetting_AM_fix && gRxVfo->Modulation == MODULATION_AM) ? AM_fix_get_gain_diff() : 0)
-#endif
         + dBmCorrTable[gRxVfo->Band];
 
     int s0_9 = gEeprom.S0_LEVEL - gEeprom.S9_LEVEL;
@@ -1164,6 +1228,22 @@ void UI_MAIN_PrintAGC(bool now)
 }
 #endif
 
+#ifdef ENABLE_FEAT_F4HWN_SCAN_PROGRESS
+// Count the scan-list name hold down on the 10 ms tick. It used to ride the 500 ms
+// tick, but the countdown is armed at an arbitrary instant, so the first interval was
+// anywhere from ~0 to 500 ms - the name could linger up to half a second short of, or
+// over, its nominal hold. At 10 ms resolution that error is one tick at most. Gated on
+// DISPLAY_MAIN exactly as the old 500 ms path was, so it only ticks while the name can
+// actually be on screen.
+void UI_MAIN_TimeSlice10ms(void)
+{
+    if (gScreenToDisplay == DISPLAY_MAIN
+        && gScanListNameCountdown_10ms > 0
+        && --gScanListNameCountdown_10ms == 0)
+        gUpdateDisplay = true;
+}
+#endif
+
 void UI_MAIN_TimeSlice500ms(void)
 {
     if(gScreenToDisplay==DISPLAY_MAIN) {
@@ -1253,6 +1333,23 @@ static void UI_PrintScanRangeCss(char *String, uint8_t LabelX, uint8_t ValueX, u
 }
 #endif
 
+#ifdef ENABLE_FEAT_F4HWN_ACTION_PICKER
+static void UI_PrintActionPickerLabel(uint8_t index, uint8_t line, bool big)
+{
+    char label[20];
+    strcpy(label, gSubMenu_SIDEFUNCTIONS[index].name);
+
+    char *newline = strchr(label, '\n');
+    if (newline != NULL)
+        *newline = ' ';
+
+    if (big)
+        UI_PrintString(label, 0, LCD_WIDTH, line, 8);
+    else
+        UI_PrintStringSmallNormal(label, 0, LCD_WIDTH, line);
+}
+#endif
+
 void UI_DisplayMain(void)
 {
     char               String[22];
@@ -1272,6 +1369,27 @@ void UI_DisplayMain(void)
         ST7565_BlitFullScreen();
         return;
     }
+
+#ifdef ENABLE_FEAT_F4HWN_ACTION_PICKER
+    if (gActionPickerKey != 0) {
+        const uint8_t selection = gActionPickerSelection[gActionPickerKey - 1];
+        uint8_t previous = selection - 1;
+        uint8_t next = selection + 1;
+
+        if (previous == 0)
+            previous = gSubMenu_SIDEFUNCTIONS_size - 1;
+        if (next >= gSubMenu_SIDEFUNCTIONS_size)
+            next = 1;
+
+        UI_PrintActionPickerLabel(previous, 1, false);
+        UI_PrintActionPickerLabel(selection, 2, true);
+        UI_PrintActionPickerLabel(next, 4, false);
+        if (!ACTION_IsAvailable(gSubMenu_SIDEFUNCTIONS[selection].id))
+            UI_PrintStringSmallNormalInverse("N/A", 53, 0, 6);
+        ST7565_BlitFullScreen();
+        return;
+    }
+#endif
 
 #ifndef ENABLE_FEAT_F4HWN
     if (gEeprom.KEY_LOCK && gKeypadLocked > 0)
@@ -1458,11 +1576,6 @@ void UI_DisplayMain(void)
         if (gCurrentFunction == FUNCTION_TRANSMIT)
         {   // transmitting
 
-#ifdef ENABLE_ALARM
-            if (gAlarmState == ALARM_STATE_SITE_ALARM)
-                mode = VFO_MODE_RX;
-            else
-#endif
             {
                 if (activeTxVFO == vfo_num)
                 {   // show the TX symbol
@@ -1526,7 +1639,11 @@ void UI_DisplayMain(void)
                 }
             }
             else {
-                if(RxOnVfofrequency == frequency && !isMainOnly()) {
+                if(RxOnVfofrequency == frequency && !isMainOnly()
+#if defined(ENABLE_FEAT_F4HWN_SCAN_FASTER) && defined(ENABLE_FEAT_F4HWN_SCAN_RSSI)
+                    && !CHFRSCANNER_HasScanRssiSparkline()
+#endif
+                ) {
                     //UI_PrintStringSmallNormal(">>", 8, 0, line);
                     //memcpy(p_line0 + 14, BITMAP_VFO_Default, sizeof(BITMAP_VFO_Default));
                     GUI_DisplaySmallest(">>", 8, RxLine == 0 ? 1 : 33, false, true);
@@ -1537,11 +1654,6 @@ void UI_DisplayMain(void)
             }
 #endif
         }
-
-#if defined(ENABLE_FEAT_F4HWN_SCAN_FASTER) && defined(ENABLE_FEAT_F4HWN_SCAN_RSSI)
-        if (vfo_num == gEeprom.RX_VFO && gScanStateDir != SCAN_OFF && !FUNCTION_IsRx())
-            UI_MAIN_DrawScanRssiSparkline(line);
-#endif
 
         if((gScanStateDir == SCAN_OFF || vfo_num != gEeprom.RX_VFO) && TX_freq_check(frequency) != 0 && gEeprom.VfoInfo[vfo_num].TX_LOCK == true)
         {
@@ -1625,12 +1737,6 @@ void UI_DisplayMain(void)
 
         enum VfoState_t state = VfoState[vfo_num];
 
-#ifdef ENABLE_ALARM
-        if (gCurrentFunction == FUNCTION_TRANSMIT && gAlarmState == ALARM_STATE_SITE_ALARM) {
-            if (activeTxVFO == vfo_num)
-                state = VFO_STATE_ALARM;
-        }
-#endif
         if (state != VFO_STATE_NORMAL)
         {
             if (state < ARRAY_SIZE(VfoStateStr))
@@ -1726,8 +1832,6 @@ void UI_DisplayMain(void)
 #endif
 
                 #ifdef ENABLE_FEAT_F4HWN_RESCUE_OPS
-                {
-                    }
                 }
                 #endif
 
@@ -2000,15 +2104,12 @@ void UI_DisplayMain(void)
             }
 
             GUI_DisplaySmallest(String, 68 + shift, line == 0 ? 17 : 49, false, true);
-
-            //sprintf(String, "%d.%02u", vfoInfo->StepFrequency / 100, vfoInfo->StepFrequency % 100);
-            //GUI_DisplaySmallest(String, 91, line == 0 ? 2 : 34, false, true);
         }
 #else
         UI_PrintStringSmallNormal(s, LCD_WIDTH + 24, 0, line + 1);
 #endif
 
-        if (state == VFO_STATE_NORMAL || state == VFO_STATE_ALARM)
+        if (state == VFO_STATE_NORMAL)
         {   // show the TX power
             uint8_t currentPower = vfoInfo->OUTPUT_POWER % 8;
             uint8_t arrowPos = 19;
@@ -2037,8 +2138,6 @@ void UI_DisplayMain(void)
             else
             {
                 const char pwr_long[][5] = {"LOW1", "LOW2", "LOW3", "LOW4", "LOW5", "MID", "HIGH"};
-                //sprintf(String, "%s", pwr_long[currentPower]);
-                //GUI_DisplaySmallest(String, 24, line == 0 ? 17 : 49, false, true);
                 GUI_DisplaySmallest(pwr_long[currentPower], 24, line == 0 ? 17 : 49, false, true);
             }
 
@@ -2055,7 +2154,11 @@ void UI_DisplayMain(void)
             #ifdef ENABLE_FEAT_F4HWN_RESCUE_OPS
                 const char dir_list[][2] = {"", "+", "-", "D"};
 
-                if(gTxVfo->TX_OFFSET_FREQUENCY_DIRECTION != 0 && gTxVfo->pTX == &gTxVfo->freq_config_RX && !vfoInfo->FrequencyReverse)
+                if(gRemoveOffset &&
+                   vfoInfo == gTxVfo &&
+                   gTxVfo->TX_OFFSET_FREQUENCY_DIRECTION != 0 &&
+                   gTxVfo->pTX == &gTxVfo->freq_config_RX &&
+                   !vfoInfo->FrequencyReverse)
                 {
                     i = 3;
                 }
@@ -2072,9 +2175,7 @@ void UI_DisplayMain(void)
         {
             #ifdef ENABLE_FEAT_F4HWN_RESCUE_OPS
             if(i == 3)
-            {
                 GUI_DisplaySmallest(dir_list[i], 43, line == 0 ? 17 : 49, false, true);
-            }
             else
             {
             #endif
@@ -2214,6 +2315,11 @@ void UI_DisplayMain(void)
 #endif
     }
 
+#if defined(ENABLE_FEAT_F4HWN_SCAN_FASTER) && defined(ENABLE_FEAT_F4HWN_SCAN_RSSI)
+    if (gScanStateDir != SCAN_OFF && !FUNCTION_IsRx())
+        UI_MAIN_DrawScanRssiSparkline(isMainOnly() ? 0 : (uint8_t)(gEeprom.RX_VFO * 4u));
+#endif
+
 #ifdef ENABLE_AGC_SHOW_DATA
     center_line = CENTER_LINE_IN_USE;
     UI_MAIN_PrintAGC(false);
@@ -2256,23 +2362,6 @@ void UI_DisplayMain(void)
         if (gSetting_mic_bar && gCurrentFunction == FUNCTION_TRANSMIT) {
             center_line = CENTER_LINE_AUDIO_BAR;
             UI_DisplayAudioBar();
-        }
-        else
-#endif
-
-#if defined(ENABLE_AM_FIX) && defined(ENABLE_AM_FIX_SHOW_DATA)
-        if (rx && gEeprom.VfoInfo[gEeprom.RX_VFO].Modulation == MODULATION_AM && gSetting_AM_fix)
-        {
-            if (gScreenToDisplay != DISPLAY_MAIN
-#ifdef ENABLE_DTMF_CALLING
-                || gDTMF_CallState != DTMF_CALL_STATE_NONE
-#endif
-                )
-                return;
-
-            center_line = CENTER_LINE_AM_FIX_DATA;
-            AM_fix_print_data(gEeprom.RX_VFO, String);
-            UI_PrintStringSmallNormal(String, 2, 0, 3);
         }
         else
 #endif

@@ -14,9 +14,12 @@
  *     limitations under the License.
  */
 #include "app/spectrum.h"
-#include "am_fix.h"
 #include "audio.h"
 #include "misc.h"
+
+#if defined(ENABLE_UART) || defined(ENABLE_USB)
+#include "app/uart.h"
+#endif
 
 #ifdef ENABLE_SCAN_RANGES
 #include "chFrScanner.h"
@@ -73,7 +76,7 @@ static uint16_t blacklistFreqs[15];
 static uint8_t blacklistFreqsIdx;
 #endif
 
-const char *bwOptions[] = {"25", "12.5", "6.25"};
+const char *const bwOptions[] = {"25", "12.5", "6.25"};
 const uint8_t modulationTypeTuneSteps[] = {100, 50, 10};
 const uint8_t modTypeReg47Values[] = {1, 7, 5};
 
@@ -176,7 +179,7 @@ char freqInputString[11];
 uint8_t menuState = 0;
 uint16_t listenT = 0;
 
-RegisterSpec registerSpecs[] = {
+const RegisterSpec registerSpecs[] = {
     {},
     {"LNAs", BK4819_REG_13, 8, 0b11, 1},
     {"LNA", BK4819_REG_13, 5, 0b111, 1},
@@ -607,10 +610,6 @@ uint16_t GetRssi()
     // Discard first read (AGC may still be transitioning), keep second
     BK4819_GetRSSI();
     uint16_t rssi = BK4819_GetRSSI();
-#ifdef ENABLE_AM_FIX
-    if (settings.modulationType == MODULATION_AM && gSetting_AM_fix)
-        rssi += AM_fix_get_gain_diff() * 2;
-#endif
     return rssi;
 }
 
@@ -1733,17 +1732,23 @@ static uint8_t GetScanStepTextWidth()
     return (sprintf(NULL, "%u", GetScanStep() / 100) + 4) * 4; // "%u.%02uk", 4 px advance per char
 }
 
+static uint8_t GetBwTextWidth()
+{
+    return (strlen(bwOptions[settings.listenBw]) * 4) + 4; // 4 px advance per char
+}
+
 static void DrawRssiTriggerLevel(const uint8_t *topY)
 {
     if (settings.rssiTriggerLevel == RSSI_MAX_VALUE || monitorMode)
         return;
     uint8_t scanStepTextWidth = GetScanStepTextWidth();
+    uint8_t bwTextWidth = GetBwTextWidth();
     uint8_t y = Rssi2Y(settings.rssiTriggerLevel);
     for (uint8_t x = 0; x < 128; x += 2)
     {
         if (SpectrumColumnAtOrAboveY(topY, x, y))
             continue;
-        if (y <= 12 && (x < scanStepTextWidth + 2 || x >= 114))
+        if (y <= 12 && (x < scanStepTextWidth + 2 || x >= 128 - bwTextWidth - 2))
             continue;
         if (gFrameBuffer[y / 8][x] & (1 << (y % 8)))
             continue;
@@ -2474,12 +2479,6 @@ static void Tick()
     if (gNextTimeslice)
     {
         gNextTimeslice = false;
-#ifdef ENABLE_AM_FIX
-        if (settings.modulationType == MODULATION_AM && !lockAGC)
-        {
-            AM_fix_10ms(vfo); // allow AM_Fix to apply its AGC action
-        }
-#endif
         BACKLIGHT_Update();
     }
 
@@ -2612,6 +2611,9 @@ void APP_RunSpectrum()
 
     while (isInitialized)
     {
+#if defined(ENABLE_UART) || defined(ENABLE_USB)
+        UART_ServiceCommands();
+#endif
         Tick();
     }
 

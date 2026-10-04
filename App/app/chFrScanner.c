@@ -553,11 +553,7 @@ static void ScanFastApplyChannelShape(ModulationMode_t modulation)
     }
     else
     {
-#ifdef ENABLE_AM_FIX
-        BK4819_SetFilterBandwidth(BK4819_FILTER_BW_WIDE, true);
-#else
         BK4819_SetFilterBandwidth(BK4819_FILTER_BW_WIDE, false);
-#endif
     }
 
     if (modulationChanged)
@@ -771,12 +767,16 @@ void CHFRSCANNER_Start(const bool storeBackupSettings, const int8_t scan_directi
 #endif
 
     if (IS_MR_CHANNEL(gNextMrChannel))
-    {   
+    {
+        bool scanListChanged = false;
 
         if(!RADIO_CheckValidList(gEeprom.SCAN_LIST_DEFAULT)) {
             RADIO_NextValidList(1);
-            UI_MAIN_NotifyScanProgressDataChanged();
+            scanListChanged = true;
         }
+
+        if (storeBackupSettings || scanListChanged)
+            UI_MAIN_NotifyScanListChanged();
 
         // channel mode
         if (storeBackupSettings) {

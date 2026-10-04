@@ -32,6 +32,8 @@ void     APP_Update(void);
 void     APP_TimeSlice10ms(void);
 void     APP_TimeSlice500ms(void);
 bool     APP_IsScreenSaverDisplayed(void);
+void     APP_ModalBacklightTick(bool allowScreenSaver);
+void     APP_ModalScreenSaverExit(void);
 
 
 #ifdef ENABLE_MESSENGER

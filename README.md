@@ -14,7 +14,7 @@ For the base-firmware features (F4HWN menus, scan lists, power settings, etc.) s
 
 # About this fork (feature_messenger branch)
 
-This is the **IU2VTM** build (based on F4HWN/armel v5.6.0). It turns the little
+This is the **IU2VTM** build (based on F4HWN/armel v6.0.0). It turns the little
 UV-K1 into a tiny text-messaging radio, adds a second kind of spectrum display,
 lets you clone radios over the air, and a few quality-of-life extras.
 

@@ -76,9 +76,6 @@ enum
     MENU_S_PRI,
     MENU_S_PRI_CH_1,
     MENU_S_PRI_CH_2,    
-#ifdef ENABLE_ALARM
-    MENU_AL_MOD,
-#endif
 #ifdef ENABLE_DTMF_CALLING
     MENU_ANI_ID,
 #endif
@@ -101,9 +98,6 @@ enum
     MENU_VOL,
     MENU_BAT_TXT,
     MENU_AM,
-#ifdef ENABLE_AM_FIX
-    MENU_AM_FIX,
-#endif
 #ifndef ENABLE_FEAT_F4HWN
     #ifdef ENABLE_NOAA
         MENU_NOAA_S,
@@ -153,6 +147,9 @@ enum
         MENU_NOAA_S,
     #endif
     MENU_SET_NAV,
+    #ifdef ENABLE_FEAT_F4HWN_MULTIBOOT
+        MENU_SET_CFG,
+    #endif
     #ifdef ENABLE_FEAT_F4HWN_AUDIO
         MENU_SET_AUD,
     #endif
@@ -176,6 +173,37 @@ enum
 #endif
 };
 
+#ifdef ENABLE_FEAT_F4HWN_MENU_CAT
+// Categories (niveau 1) — l'ordre = ordre d'affichage de l'ecran des categories.
+enum {
+    CAT_CHANNELS = 0,
+    CAT_SCAN,
+    CAT_KEYS,
+    CAT_POWER,
+    CAT_DISPLAY,
+    CAT_TIMERS,
+    CAT_AUDIO,
+    CAT_RADIO,
+    CAT_DTMF,
+    CAT_SERVICE,   // menu cache : n'apparait que si gF_LOCK
+    CAT_ALL,       // liste plate complete, ordre et numeros d'origine
+    CAT_COUNT
+};
+
+#define MENU_LEVEL_CAT   0
+#define MENU_LEVEL_ITEMS 1
+
+extern const char *const CategoryNames[];
+extern uint8_t            gMenuCategory;
+extern uint8_t            gMenuLevel;
+extern uint8_t            gCatOrder[];
+extern uint8_t            gMenuCatCursor;
+extern uint8_t            gCatLastPos[];
+
+void UI_MENU_BuildCategoryScreen(void);
+uint8_t UI_MENU_CategoryItemCount(uint8_t cat);
+#endif
+
 extern const uint8_t FIRST_HIDDEN_MENU_ITEM;
 extern const t_menu_item MenuList[];
 
@@ -191,9 +219,6 @@ extern const char* const            gSubMenu_RXMode[4];
     extern const char* const        gSubMenu_VOICE[3];
 #endif
 extern const char* const            gSubMenu_MDF[4];
-#ifdef ENABLE_ALARM
-    extern const char* const        gSubMenu_AL_MOD[2];
-#endif
 #ifdef ENABLE_DTMF_CALLING
 extern const char* const            gSubMenu_D_RSP[4];
 #endif
@@ -255,6 +280,7 @@ extern const t_sidefunction  gSubMenu_SIDEFUNCTIONS[];
 extern bool              gIsInSubMenu;
                          
 extern uint8_t           gMenuCursor;
+extern uint8_t           gMenuIndices[];
 
 extern int32_t           gSubMenuSelection;
                          
@@ -266,5 +292,7 @@ extern bool              edit_is_uppercase;
 void UI_DisplayMenu(void);
 int UI_MENU_GetCurrentMenuId();
 uint8_t UI_MENU_GetMenuIdx(uint8_t id);
+uint8_t UI_MENU_GetViewPos(uint8_t id);
+void UI_MENU_BuildView(void);
 
 #endif
