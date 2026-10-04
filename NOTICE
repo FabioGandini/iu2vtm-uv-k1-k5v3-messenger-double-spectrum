@@ -33,6 +33,7 @@ others:
   Egzumer
   muzkr
   Armel / F4HWN
+  Gogu-Qs / GOGUFW
 
 Project-specific derived components
 -----------------------------------
@@ -41,6 +42,12 @@ The spectrum analyzer implementation includes work originally developed
 by fagci:
 
   https://github.com/fagci
+
+Parts of the BK4829 Messenger RX/re-arm strategy and channel-busy handling
+were informed by the GOGUFW Messenger project. GOGUFW's earlier Messenger
+and multi-radio Range Check implementation also served as a reference:
+
+  https://github.com/Gogu-Qs/GOGUFW-UV-K1-Messenger
 
 Third-party components
 ----------------------
@@ -73,5 +80,5 @@ conditions on license copies, modified-file notices, retained copyright
 and attribution notices, and NOTICE files.
 
 Attribution in this file does not imply endorsement by Dual Tachyon,
-OneOfEleven, fagci, Egzumer, muzkr, Armel / F4HWN or any other
+OneOfEleven, fagci, Egzumer, muzkr, Armel / F4HWN, Gogu-Qs or any other
 contributor.
