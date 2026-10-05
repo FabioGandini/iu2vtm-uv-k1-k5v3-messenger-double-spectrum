@@ -125,6 +125,15 @@ the Broadcast FM app is not installed yet.
 
 Apps are trusted native code: only install apps you trust.
 
+### Key actions after updating from an older build
+
+Since F4HWN v6 the key-action IDs stored in the radio are fixed. This firmware
+remaps the actions saved by older IU2VTM builds **once**, at the first boot
+(it leaves a `V6` marker in the config so it never runs twice). If a key was
+set to MESSENGER, FM, RX MODE... before the update, it keeps doing the same
+thing. Apps removed upstream (ALARM, BACKLIGHT, BL TEMP OFF) become NONE.
+After a *Reset ALL* nothing is remapped.
+
 ## 🔁 8. Aircopy — clone one radio into another over the air
 
 **What it is (simply):** copy all the settings/channels from one radio to

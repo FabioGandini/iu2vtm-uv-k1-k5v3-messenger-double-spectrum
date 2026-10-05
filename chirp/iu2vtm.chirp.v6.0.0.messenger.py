@@ -325,9 +325,10 @@ u8  backlight_on_TX_RX:2,
 // --------------------
 
 #seekto 0x00A158;
-// bytes 0-1: legacy build-options bitmap (no longer written by firmware v6,
-// see FW_FEATURES)
-u8 __LEGACY_BUILD_OPTIONS[2];
+// bytes 0-1: firmware config marker. Old firmware stored the build-options
+// bitmap here; the firmware now keeps 0x56 0x36 ("V6") to say that the key
+// actions use the fixed v6 IDs (see FW_CFG_MARKER and sync_out)
+u8 fw_cfg_marker[2];
 
 // byte 2: SET_LCK_t (0 KEYS, 1 KEYS+ACTIONS, 2 KEYS+PTT, 3 KEYS+ACTIONS+PTT)
 u8 set_lck;
@@ -783,6 +784,11 @@ class _FwFeatures:
 
 FW_FEATURES = _FwFeatures()
 
+# Marker the firmware looks for in bytes 0-1 of the 0xA158 block. Without it
+# the firmware assumes the key actions were saved with the legacy numbering
+# and remaps them once at boot (App/helper/action_migrate.h).
+FW_CFG_MARKER = (0x56, 0x36)
+
 MIC_GAIN_LIST = ["+1.5dB", "+4.0dB", "+8.0dB", "+12.0dB", "+16.0dB", "+20.0dB", "+24.0dB", "+28.0dB", "+31.5dB"]
 
 def xorarr(data: bytes):
@@ -1203,6 +1209,10 @@ class UVK5RadioEgzumer(chirp_common.CloneModeRadio):
 
     # Do an upload of the radio to the serial port
     def sync_out(self):
+        # This driver writes the fixed v6 action IDs: tell the firmware not to
+        # run its legacy->v6 remap on what we upload.
+        self._memobj.fw_cfg_marker[0] = FW_CFG_MARKER[0]
+        self._memobj.fw_cfg_marker[1] = FW_CFG_MARKER[1]
         do_upload(self)
 
     # Convert the raw byte array into a memory object structure

@@ -26,6 +26,7 @@
 #include "driver/py25q16.h"
 #include "misc.h"
 #include "settings.h"
+#include "helper/action_migrate.h"
 #include "ui/menu.h"
 
 EEPROM_Config_t gEeprom = { 0 };
@@ -47,9 +48,35 @@ static void SETTINGS_LoadEepromDtmf(uint32_t addr, char *dest, size_t size, cons
     }
 }
 
+// IU2VTM: remap key actions saved with the legacy (pre-v6) numbering, once.
+// See helper/action_migrate.h. Runs before the settings are loaded, with the
+// multiboot config bank already selected.
+static void SETTINGS_MigrateActionIds(void)
+{
+    uint8_t mark[2];
+    uint8_t keys[5];
+
+    PY25Q16_ReadBuffer(0x00A158, mark, sizeof(mark));
+    if (mark[0] == ACTION_MIGRATE_MARK0 && mark[1] == ACTION_MIGRATE_MARK1)
+        return;                          // already in v6 numbering
+
+    PY25Q16_ReadBuffer(0x00A0A8, keys, sizeof(keys));
+    if (!ActionMigrate_KeysErased(keys))
+    {
+        ActionMigrate_RemapKeys(keys);
+        PY25Q16_WriteBuffer(0x00A0A8, keys, sizeof(keys), false);
+    }
+
+    mark[0] = ACTION_MIGRATE_MARK0;
+    mark[1] = ACTION_MIGRATE_MARK1;
+    PY25Q16_WriteBuffer(0x00A158, mark, sizeof(mark), false);
+}
+
 void SETTINGS_InitEEPROM(void)
 {
     uint8_t Data[16] = {0};
+
+    SETTINGS_MigrateActionIds();
 
     //
     // Version check
