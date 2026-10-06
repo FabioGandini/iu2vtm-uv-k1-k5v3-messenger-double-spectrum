@@ -184,6 +184,7 @@ static void show(void)
     A->blit_full();
 }
 
+__attribute__((section(".text.entry"),used))
 void app_main(const app_api_t *api)
 {
     A = api;
