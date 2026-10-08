@@ -28,6 +28,19 @@ step() { printf '\r  🔨 %-13s [%d/3] %-8s' "$APP_NAME" "$1" "$2"; }
 trap 'printf "\r  ❌ %-13s build failed            \n" "$APP_NAME"' ERR
 
 step 1 compile ; "$CC" $CFLAGS $LDFLAGS "${APP}_app.c" -lgcc -o "${APP}.elf"
+
+# The loader jumps to offset 0 of the blob: app_main must be the very first
+# symbol, pinned there via __attribute__((section(".text.entry"),used)). A
+# stray edit can silently move that attribute onto the wrong function (it
+# still compiles -- entry() then jumps into whatever landed at offset 0
+# instead, with no observable error on this build host), so check for real.
+VMA_HEX=$(printf '%08x' "$APP_VMA")
+ENTRY_SYM=$(arm-none-eabi-nm "${APP}.elf" | awk -v vma="$VMA_HEX" '$1==vma && ($2=="T"||$2=="t") {print $3; exit}')
+if [ "$ENTRY_SYM" != "app_main" ]; then
+  printf '\r  🚨 %-13s entry offset 0 is "%s", not app_main\n' "$APP_NAME" "${ENTRY_SYM:-<empty>}"
+  exit 1
+fi
+
 step 2 objcopy ; "$OBJCOPY" -O binary "${APP}.elf" "${APP}.bin"
 step 3 pack    ; python3 ../pack_app.py "${APP}.bin" "${OUT}.app" \
                    --name "$APP_NAME" --ver "$APP_VER" --api-min "$APP_API_MIN" --vma "${APP_VMA}" \

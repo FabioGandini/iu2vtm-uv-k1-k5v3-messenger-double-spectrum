@@ -24,4 +24,6 @@ SECTIONS {
     __app_end = .;
     ASSERT(__app_end <= APP_VMA + APP_LENGTH,
            "RF Probe overlay app overflows the 4 KiB overlay")
+
+    /DISCARD/ : { *(.ARM.exidx*) *(.ARM.extab*) *(.eh_frame*) *(.comment) *(.note.*) }
 }

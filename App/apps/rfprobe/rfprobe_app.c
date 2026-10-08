@@ -184,6 +184,20 @@ static void show(void)
     A->blit_full();
 }
 
+static void showKey(uint8_t key)
+{
+    /* Diagnostic: live raw key code, so a stuck app shows whether get_key()
+     * is still being read at all (this updates) or appears frozen (it
+     * doesn't) -- two very different problems. */
+    char *o = str;
+    o = put(o, "key:");
+    o = putu(o, key);
+    o = put(o, "   ");
+    *o = 0;
+    A->print_normal(str, 0, 127, 7);
+    A->blit_full();
+}
+
 __attribute__((section(".text.entry"),used))
 void app_main(const app_api_t *api)
 {
@@ -191,12 +205,15 @@ void app_main(const app_api_t *api)
     haveResult = false;
     edgeCount = 0;
 
+    A->backlight_on();
+
     calibrate();
     show();
 
     bool pttHeld = false;
     for (;;) {
         uint8_t key = A->get_key();
+        showKey(key);
         if (key == APP_KEY_EXIT) break;
 
         bool pttNow = (key == APP_KEY_PTT);
