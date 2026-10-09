@@ -136,7 +136,7 @@ static void show(void)
     char *o;
     A->display_clear();
 
-    line(0, "RF PROBE 433 b3");
+    line(0, "RF PROBE 433 b4");
 
     o = str;
     o = put(o, "VFO ");
@@ -215,7 +215,13 @@ void app_main(const app_api_t *api)
 
     A->backlight_on();
 
-    calibrate();
+    /* DIAGNOSTIC BUILD: calibrate() skipped on purpose, to isolate whether
+     * its ~264 back-to-back SPI reads (delay_ms x200 + rssi_dbm x64) are
+     * what leaves the app unable to read keys afterward. Values below are
+     * placeholders, not measured -- this build is not meant to capture
+     * correctly, only to test whether the key readout comes back. */
+    ticksPerMs = 48000;
+    noiseFloor = -100;
     show();
 
     bool pttHeld = false;
