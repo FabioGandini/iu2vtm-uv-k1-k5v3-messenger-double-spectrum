@@ -194,7 +194,11 @@ static void showKey(uint8_t key)
     o = putu(o, key);
     o = put(o, "   ");
     *o = 0;
-    A->print_normal(str, 0, 127, 7);
+    A->print_normal(str, 0, 127, 2); /* row 2: the only one show() leaves free
+                                       * (FRAME_LINES is 7: valid rows 0..6 --
+                                       * row 7 doesn't exist, writes straight
+                                       * past the framebuffer into whatever
+                                       * RAM follows it) */
     A->blit_full();
 }
 
