@@ -136,7 +136,7 @@ static void show(void)
     char *o;
     A->display_clear();
 
-    line(0, "RF PROBE 433 (exp.)");
+    line(0, "RF PROBE 433 b3");
 
     o = str;
     o = put(o, "VFO ");
@@ -184,21 +184,25 @@ static void show(void)
     A->blit_full();
 }
 
+static uint16_t frameCounter;
+
 static void showKey(uint8_t key)
 {
-    /* Diagnostic: live raw key code, so a stuck app shows whether get_key()
-     * is still being read at all (this updates) or appears frozen (it
-     * doesn't) -- two very different problems. */
+    /* Diagnostic: live raw key code + a free-running frame counter, so a
+     * stuck app shows two different things independently: whether the loop
+     * is iterating AT ALL (frameCounter moves even with no key pressed) and
+     * whether get_key() specifically is live (key changes when a button is
+     * pressed). Row 2 is the only one show() leaves free -- FRAME_LINES is
+     * 7, valid rows are 0..6, row 7 doesn't exist (that was the previous
+     * build's bug: a write past the framebuffer into shared firmware RAM). */
     char *o = str;
-    o = put(o, "key:");
+    o = put(o, "k:");
     o = putu(o, key);
+    o = put(o, " f:");
+    o = putu(o, ++frameCounter);
     o = put(o, "   ");
     *o = 0;
-    A->print_normal(str, 0, 127, 2); /* row 2: the only one show() leaves free
-                                       * (FRAME_LINES is 7: valid rows 0..6 --
-                                       * row 7 doesn't exist, writes straight
-                                       * past the framebuffer into whatever
-                                       * RAM follows it) */
+    A->print_normal(str, 0, 127, 2);
     A->blit_full();
 }
 
