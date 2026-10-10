@@ -33,8 +33,12 @@
 #include "driver/bk4819.h"
 #include "driver/st7565.h"
 #include "external/printf/printf.h"
+#include "font.h"
 #include "functions.h"
 #include "helper/battery.h"
+#ifdef ENABLE_FEAT_F4HWN_K5VIEWER
+    #include "k5viewer.h"
+#endif
 #include "misc.h"
 #include "radio.h"
 #include "settings.h"
@@ -268,7 +272,7 @@ static inline bool ScanProgress_GetBit(const uint8_t *map, uint16_t ch)
 
 static uint8_t ScanProgress_GetActiveScanList(void)
 {
-    const uint8_t max_scan_list = MR_CHANNELS_LIST + 1;
+    const uint8_t max_scan_list = SCAN_LIST_MODE_MIX;
     uint8_t scan_list = gEeprom.SCAN_LIST_DEFAULT;
 
     if (scan_list == 0 || scan_list > max_scan_list)
@@ -286,7 +290,9 @@ static void UI_MAIN_DrawScanListName(void)
     strcpy(text, "SCAN LIST ");
     char *p = text + 10;                     // sizeof("SCAN LIST ") - 1
 
-    if (scan_list > MR_CHANNELS_LIST) {
+    if (scan_list == SCAN_LIST_MODE_MIX) {
+        *p++ = 'M'; *p++ = 'I'; *p++ = 'X';
+    } else if (scan_list == SCAN_LIST_MODE_ALL) {
         *p++ = 'A'; *p++ = 'L'; *p++ = 'L';
     } else {
         const char *name = gListName[scan_list - 1];
@@ -312,13 +318,7 @@ static bool ScanProgress_ChannelBelongsToList(uint16_t channel, const ChannelAtt
     if (att->band > BAND7_470MHz)
         return false;
 
-    if (scan_list > MR_CHANNELS_LIST && att->scanlist != 0)
-        return true;
-
-    if (scan_list > 0 && att->scanlist == (MR_CHANNELS_LIST + 1))
-        return true;
-
-    if (scan_list == 0 || scan_list != att->scanlist)
+    if (!RADIO_IsChannelInScanList(att->scanlist, scan_list))
         return false;
 
     if (gEeprom.SCAN_LIST_ENABLED) {
@@ -1313,6 +1313,99 @@ static void UI_FormatFrequency(uint32_t freq, char *buffer) {
     sprintf(buffer, "%3u.%05u", freq / 100000, freq % 100000);
 }
 
+#ifdef ENABLE_FEAT_F4HWN_FULL_WATCH
+#define FULL_WATCH_ARROW_Y     25u
+#define FULL_WATCH_ARROW_WIDTH 16u
+
+static bool gFullWatchArrowsVisible;
+
+static void UI_MAIN_DrawFullWatchArrows(uint8_t x, uint8_t phase)
+{
+    const uint8_t *glyph = gFont3x5['>' - ' '];
+    uint8_t *line = gFrameBuffer[FULL_WATCH_ARROW_Y / 8u];
+    const uint8_t mask = (uint8_t)(0x1Fu << (FULL_WATCH_ARROW_Y % 8u));
+    const uint8_t end = x + FULL_WATCH_ARROW_WIDTH;
+
+    for (uint8_t column = 0; column < FULL_WATCH_ARROW_WIDTH; column++)
+        line[x + column] &= (uint8_t)~mask;
+
+    for (uint8_t arrow = 0; arrow < 4u; arrow++)
+    {
+        const uint8_t arrowX = x + arrow * 4u + phase;
+        if (arrowX + 2u >= end)
+            continue;
+
+        for (uint8_t column = 0; column < 3u; column++)
+            line[arrowX + column] |=
+                (uint8_t)(glyph[column] << (FULL_WATCH_ARROW_Y % 8u));
+    }
+}
+
+void UI_MAIN_UpdateFullWatchArrows(void)
+{
+    if (!gFullWatchArrowsVisible ||
+        gScreenToDisplay != DISPLAY_MAIN ||
+        center_line != CENTER_LINE_NONE ||
+        gUpdateDisplay ||
+        APP_IsScreenSaverDisplayed())
+        return;
+
+    uint8_t count;
+    APP_GetFullWatchBackgroundVfos(&count);
+    if (count == 0)
+        return;
+
+    const uint8_t x = count == 1 ? 53u : 45u;
+    UI_MAIN_DrawFullWatchArrows(x, APP_GetFullWatchScrollPhase());
+    ST7565_DrawLine(x, (FULL_WATCH_ARROW_Y / 8u) + 1u,
+                    &gFrameBuffer[FULL_WATCH_ARROW_Y / 8u][x],
+                    FULL_WATCH_ARROW_WIDTH);
+#ifdef ENABLE_FEAT_F4HWN_K5VIEWER
+    K5VIEWER_Update(false);
+#endif
+}
+
+static void UI_MAIN_DrawFullWatchPriorities(void)
+{
+    if (gEeprom.DUAL_WATCH != DUAL_WATCH_FULL ||
+        (gCurrentFunction != FUNCTION_FOREGROUND &&
+         gCurrentFunction != FUNCTION_POWER_SAVE) ||
+        gScanStateDir != SCAN_OFF ||
+        gCssBackgroundScan)
+        return;
+
+    uint8_t count;
+    VFO_Info_t *const *vfos = APP_GetFullWatchBackgroundVfos(&count);
+    if (count == 0)
+        return;
+
+    gFullWatchArrowsVisible = true;
+    GUI_DisplaySmallest(count == 1 ? "TRIPLE WATCH" : "QUAD WATCH",
+                        3u, 25u, false, true);
+    UI_MAIN_DrawFullWatchArrows(count == 1 ? 53u : 45u,
+                                APP_GetFullWatchScrollPhase());
+
+    for (uint8_t i = 0; i < count; i++)
+    {
+        const VFO_Info_t *vfo = vfos[i];
+        const uint16_t channel = vfo->CHANNEL_SAVE;
+
+        char text[5];
+        if (IS_MR_CHANNEL(channel))
+            sprintf(text, "%04u", channel + 1u);
+        else
+        {
+            const bool isFrequency = IS_FREQ_CHANNEL(channel);
+            sprintf(text, isFrequency ? "F%u" : "N%u",
+                    channel - (isFrequency ? FREQ_CHANNEL_FIRST : NOAA_CHANNEL_FIRST) + 1u);
+        }
+
+        const uint8_t x1 = (count == 1 ? 72u : 64u) + i * 23u;
+        GUI_DisplaySmallestInverse(text, x1 + 2u, 3, false, true, x1 + 19u);
+    }
+}
+#endif
+
 #if defined(ENABLE_SCAN_RANGES) && defined(ENABLE_FEAT_F4HWN_SCAN_SUBAUDIBLE) && ENABLE_FEAT_F4HWN_SCAN_SUBAUDIBLE
 static void UI_PrintScanRangeCss(char *String, uint8_t LabelX, uint8_t ValueX, uint8_t Line)
 {
@@ -1326,7 +1419,7 @@ static void UI_PrintScanRangeCss(char *String, uint8_t LabelX, uint8_t ValueX, u
     {
         strcpy(String, "DCS");
         UI_PrintStringSmallNormalInverse(String, LabelX, 0, Line);
-        sprintf(String, "D%03o%c", DCS_Options[gScanRangeCssCode], gScanRangeCssType == CODE_TYPE_REVERSE_DIGITAL ? 'I' : 'N');
+        sprintf(String, "D%03o%c", DCS_GetOption(gScanRangeCssCode), gScanRangeCssType == CODE_TYPE_REVERSE_DIGITAL ? 'I' : 'N');
     }
 
     UI_PrintStringSmallNormal(String, ValueX, 0, Line);
@@ -1337,7 +1430,7 @@ static void UI_PrintScanRangeCss(char *String, uint8_t LabelX, uint8_t ValueX, u
 static void UI_PrintActionPickerLabel(uint8_t index, uint8_t line, bool big)
 {
     char label[20];
-    strcpy(label, gSubMenu_SIDEFUNCTIONS[index].name);
+    strcpy(label, gSubMenu_SIDEFUNCTIONS[index]);
 
     char *newline = strchr(label, '\n');
     if (newline != NULL)
@@ -1355,6 +1448,9 @@ void UI_DisplayMain(void)
     char               String[22];
 
     center_line = CENTER_LINE_NONE;
+#ifdef ENABLE_FEAT_F4HWN_FULL_WATCH
+    gFullWatchArrowsVisible = false;
+#endif
 
 #ifdef ENABLE_FEAT_F4HWN_SCAN_PROGRESS
     if (gScanStateDir == SCAN_OFF)
@@ -1377,14 +1473,14 @@ void UI_DisplayMain(void)
         uint8_t next = selection + 1;
 
         if (previous == 0)
-            previous = gSubMenu_SIDEFUNCTIONS_size - 1;
-        if (next >= gSubMenu_SIDEFUNCTIONS_size)
+            previous = SIDEFUNCTION_COUNT - 1;
+        if (next >= SIDEFUNCTION_COUNT)
             next = 1;
 
         UI_PrintActionPickerLabel(previous, 1, false);
         UI_PrintActionPickerLabel(selection, 2, true);
         UI_PrintActionPickerLabel(next, 4, false);
-        if (!ACTION_IsAvailable(gSubMenu_SIDEFUNCTIONS[selection].id))
+        if (!ACTION_IsAvailable(selection))
             UI_PrintStringSmallNormalInverse("N/A", 53, 0, 6);
         ST7565_BlitFullScreen();
         return;
@@ -1407,6 +1503,18 @@ void UI_DisplayMain(void)
 
     for (unsigned int vfo_num = 0; vfo_num < 2; vfo_num++)
     {
+#ifdef ENABLE_FEAT_F4HWN_FULL_WATCH
+        const VFO_Info_t *displayVfo = APP_GetFullWatchDisplayVfo(vfo_num);
+        uint16_t displayChannel = gEeprom.ScreenChannel[vfo_num];
+        if (displayVfo == NULL)
+            displayVfo = &gEeprom.VfoInfo[vfo_num];
+        else
+            displayChannel = displayVfo->CHANNEL_SAVE;
+#else
+        const VFO_Info_t *displayVfo = &gEeprom.VfoInfo[vfo_num];
+        const uint16_t displayChannel = gEeprom.ScreenChannel[vfo_num];
+#endif
+
 #ifdef ENABLE_FEAT_F4HWN
         const unsigned int line0 = 0;  // text screen line
         const unsigned int line1 = 4;
@@ -1571,7 +1679,7 @@ void UI_DisplayMain(void)
                 memcpy(p_line0 + 0, BITMAP_VFO_NotDefault, sizeof(BITMAP_VFO_NotDefault));
         }
 
-        uint32_t frequency = gEeprom.VfoInfo[vfo_num].pRX->Frequency;
+        uint32_t frequency = displayVfo->pRX->Frequency;
 
         if (gCurrentFunction == FUNCTION_TRANSMIT)
         {   // transmitting
@@ -1655,18 +1763,18 @@ void UI_DisplayMain(void)
 #endif
         }
 
-        if((gScanStateDir == SCAN_OFF || vfo_num != gEeprom.RX_VFO) && TX_freq_check(frequency) != 0 && gEeprom.VfoInfo[vfo_num].TX_LOCK == true)
+        if((gScanStateDir == SCAN_OFF || vfo_num != gEeprom.RX_VFO) && TX_freq_check(frequency) != 0 && displayVfo->TX_LOCK == true)
         {
             if (!FUNCTION_IsRx() || RxOnVfofrequency != frequency)
                 memcpy(p_line0 + 24, BITMAP_VFO_Lock, sizeof(BITMAP_VFO_Lock));
         }
 
-        if (IS_MR_CHANNEL(gEeprom.ScreenChannel[vfo_num]))
+        if (IS_MR_CHANNEL(displayChannel))
         {   // channel mode
             const unsigned int x = 1;
             const bool inputting = gInputBoxIndex != 0 && gEeprom.TX_VFO == vfo_num;
             if (!inputting || gScanStateDir != SCAN_OFF)
-                sprintf(String, "%04u", gEeprom.ScreenChannel[vfo_num] + 1);
+                sprintf(String, "%04u", displayChannel + 1);
             else
                 sprintf(String, "%.4s", INPUTBOX_GetAsciiAlignRight() + 4);  // show the input text
 
@@ -1688,12 +1796,12 @@ void UI_DisplayMain(void)
             }
             */
         }
-        else if (IS_FREQ_CHANNEL(gEeprom.ScreenChannel[vfo_num]))
+        else if (IS_FREQ_CHANNEL(displayChannel))
         {   // frequency mode
             // show the frequency band number
             const unsigned int x = 2;
-            const uint8_t f = 1 + gEeprom.ScreenChannel[vfo_num] - FREQ_CHANNEL_FIRST;
-            const bool over1GHz = gEeprom.VfoInfo[vfo_num].pRX->Frequency >= _1GHz_in_KHz;
+            const uint8_t f = 1 + displayChannel - FREQ_CHANNEL_FIRST;
+            const bool over1GHz = displayVfo->pRX->Frequency >= _1GHz_in_KHz;
 
             sprintf(String, over1GHz ? "F%u+" : "F%u", f);
             //if (gSetting_set_gui) {
@@ -1723,7 +1831,7 @@ void UI_DisplayMain(void)
         {
             if (gInputBoxIndex == 0 || gEeprom.TX_VFO != vfo_num)
             {   // channel number
-                sprintf(String, "N%u", 1 + gEeprom.ScreenChannel[vfo_num] - NOAA_CHANNEL_FIRST);
+                sprintf(String, "N%u", 1 + displayChannel - NOAA_CHANNEL_FIRST);
             }
             else
             {   // user entering channel number
@@ -1742,7 +1850,7 @@ void UI_DisplayMain(void)
             if (state < ARRAY_SIZE(VfoStateStr))
                 UI_PrintString(VfoStateStr[state], 35, 0, line, 8);
         }
-        else if (gInputBoxIndex > 0 && IS_FREQ_CHANNEL(gEeprom.ScreenChannel[vfo_num]) && gEeprom.TX_VFO == vfo_num)
+        else if (gInputBoxIndex > 0 && IS_FREQ_CHANNEL(displayChannel) && gEeprom.TX_VFO == vfo_num)
         {   // user entering a frequency
             const char * ascii = INPUTBOX_GetAscii();
             bool isGigaF = frequency>=_1GHz_in_KHz;
@@ -1769,17 +1877,17 @@ void UI_DisplayMain(void)
             if (gCurrentFunction == FUNCTION_TRANSMIT)
             {   // transmitting
                 if (activeTxVFO == vfo_num)
-                    frequency = gEeprom.VfoInfo[vfo_num].pTX->Frequency;
+                    frequency = displayVfo->pTX->Frequency;
             }
 
-            if (IS_MR_CHANNEL(gEeprom.ScreenChannel[vfo_num]))
+            if (IS_MR_CHANNEL(displayChannel))
             {   // it's a channel
 
                 #ifdef ENABLE_FEAT_F4HWN_RESCUE_OPS
                     if(gEeprom.MENU_LOCK == false) {
                 #endif
 
-                const ChannelAttributes_t* att = MR_GetChannelAttributes(gEeprom.ScreenChannel[vfo_num]);
+                const ChannelAttributes_t* att = MR_GetChannelAttributes(displayChannel);
 
                 const char *displayStr;
                 uint8_t xStart = 113; // 3-char name aligned left
@@ -1788,11 +1896,11 @@ void UI_DisplayMain(void)
                 {
                     // show the scan list assigment symbols
                     uint8_t countList = att->scanlist;
-                    if(countList > MR_CHANNELS_LIST + 1) {
+                    if(countList > SCAN_LIST_MODE_ALL) {
                         countList = 0;
                     }
 
-                    if (countList == MR_CHANNELS_LIST + 1) {
+                    if (countList == SCAN_LIST_MODE_ALL) {
                         displayStr = "ALL";
                     } 
                     else if (countList == 0) {
@@ -1865,17 +1973,17 @@ void UI_DisplayMain(void)
                         break;
 
                     case MDF_CHANNEL:   // show the channel number
-                        sprintf(String, "CH-%04u", gEeprom.ScreenChannel[vfo_num] + 1);
+                        sprintf(String, "CH-%04u", displayChannel + 1);
                         UI_PrintString(String, 36, 0, line, 8);
                         break;
 
                     case MDF_NAME:      // show the channel name
                     case MDF_NAME_FREQ: // show the channel name and frequency
 
-                        SETTINGS_FetchChannelName(String, gEeprom.ScreenChannel[vfo_num]);
+                        SETTINGS_FetchChannelName(String, displayChannel);
                         if (String[0] == 0)
                         {   // no channel name, show the channel number instead
-                            sprintf(String, "CH-%04u", gEeprom.ScreenChannel[vfo_num] + 1);
+                            sprintf(String, "CH-%04u", displayChannel + 1);
                         }
 
                         if (gEeprom.CHANNEL_DISPLAY_MODE == MDF_NAME) {
@@ -1954,7 +2062,7 @@ void UI_DisplayMain(void)
                 }
 
                 // show the channel symbols
-                const ChannelAttributes_t* att = MR_GetChannelAttributes(gEeprom.ScreenChannel[vfo_num]);
+                const ChannelAttributes_t* att = MR_GetChannelAttributes(displayChannel);
                 if (att->compander)
 #ifdef ENABLE_BIG_FREQ
                     memcpy(p_line0 + 120, BITMAP_compand, sizeof(BITMAP_compand));
@@ -2015,7 +2123,7 @@ void UI_DisplayMain(void)
         // ----------------------------------------
 
         String[0] = '\0';
-        const VFO_Info_t *vfoInfo = &gEeprom.VfoInfo[vfo_num];
+        const VFO_Info_t *vfoInfo = displayVfo;
 #ifdef ENABLE_FEAT_F4HWN_SCAN_FASTER
         const VFO_Info_t *scanDisplayVfo = CHFRSCANNER_GetScanDisplayVfo();
         if (vfo_num == gEeprom.RX_VFO && scanDisplayVfo != NULL)
@@ -2062,7 +2170,7 @@ void UI_DisplayMain(void)
 
             case 2:
             case 3:
-            sprintf(String, (int)pConfig->CodeType == 2 ? "%03oN" : "%03oI", DCS_Options[pConfig->Code]);
+            sprintf(String, (int)pConfig->CodeType == 2 ? "%03oN" : "%03oI", DCS_GetOption(pConfig->Code));
             break;
 
             default:
@@ -2315,6 +2423,10 @@ void UI_DisplayMain(void)
 #endif
     }
 
+#ifdef ENABLE_FEAT_F4HWN_FULL_WATCH
+    UI_MAIN_DrawFullWatchPriorities();
+#endif
+
 #if defined(ENABLE_FEAT_F4HWN_SCAN_FASTER) && defined(ENABLE_FEAT_F4HWN_SCAN_RSSI)
     if (gScanStateDir != SCAN_OFF && !FUNCTION_IsRx())
         UI_MAIN_DrawScanRssiSparkline(isMainOnly() ? 0 : (uint8_t)(gEeprom.RX_VFO * 4u));
@@ -2376,7 +2488,11 @@ void UI_DisplayMain(void)
         if (rx || gCurrentFunction == FUNCTION_FOREGROUND || gCurrentFunction == FUNCTION_POWER_SAVE)
         {
             #if 1
-                if (gSetting_live_DTMF_decoder && gDTMF_RX_live[0] != 0 && gKeypadLocked == 0)
+                if (gSetting_live_DTMF_decoder &&
+#ifdef ENABLE_FEAT_F4HWN_FULL_WATCH
+                    gEeprom.DUAL_WATCH != DUAL_WATCH_FULL &&
+#endif
+                    gDTMF_RX_live[0] != 0 && gKeypadLocked == 0)
                 {   // show live DTMF decode
                     const unsigned int len = strlen(gDTMF_RX_live);
                     const unsigned int idx = (len > (17 - 5)) ? len - (17 - 5) : 0;  // limit to last 'n' chars

@@ -4,7 +4,11 @@
 
 #include <stdint.h>
 
+#ifdef ENABLE_FEAT_F4HWN_MULTIBOOT_HOT_CFG
+extern const uint8_t gFontConfigBank[2][6];
+#else
 extern const uint8_t gFontPowerSave[2][6];
+#endif
 extern const uint8_t gFontPttOnePush[2][6];
 extern const uint8_t gFontPttClassic[2][6];
 extern const uint8_t gFontF[9];
@@ -18,8 +22,11 @@ extern const uint8_t gFontMute[12];
 extern const uint8_t gFontXB[2][6];
 extern const uint8_t gFontMO[2][6];
 extern const uint8_t gFontDWR[3][6];
+#ifdef ENABLE_FEAT_F4HWN_FULL_WATCH
+extern const uint8_t gFontFWR[3][6];
+#endif
 #ifdef ENABLE_FEAT_F4HWN_RESCUE_OPS
-    extern const uint8_t gFontRO[2][6];
+extern const uint8_t gFontRO[2][6];
 #endif
 extern const uint8_t gFontHold[2][5];
 
@@ -33,7 +40,7 @@ extern const uint8_t BITMAP_NotReady[7];
 */
 
 #ifdef ENABLE_VOX
-    extern const uint8_t gFontVox[2][6];
+extern const uint8_t gFontVox[2][6];
 #endif
 
 extern const uint8_t BITMAP_VFO_Default[7];

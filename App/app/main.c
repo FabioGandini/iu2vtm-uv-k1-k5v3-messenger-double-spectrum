@@ -25,6 +25,7 @@
 #endif
 #include "app/generic.h"
 #include "app/main.h"
+#include "app/menu.h"
 #include "app/scanner.h"
 
 #ifdef ENABLE_SPECTRUM
@@ -108,7 +109,7 @@ static void toggle_chan_scanlist(void)
 
         scanlist++;
 
-        if (scanlist > MR_CHANNELS_LIST + 1)
+        if (scanlist > SCAN_LIST_MODE_ALL)
             scanlist = 0;
 
         gTxVfo->SCANLIST_PARTICIPATION = scanlist;
@@ -503,26 +504,6 @@ static void MAIN_Key_DIGITS(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
     if (!gWasFKeyPressed) { // F-key wasn't pressed
 
         if (gScanStateDir != SCAN_OFF){
-            /*
-            switch(Key) {
-                case KEY_0:
-                    gEeprom.SCAN_LIST_DEFAULT = MR_CHANNELS_LIST + 1;
-                    #ifdef ENABLE_FEAT_F4HWN_RESUME_STATE
-                        SETTINGS_WriteCurrentState();
-                    #endif
-                    break;
-                case KEY_1...KEY_9:
-                    gEeprom.SCAN_LIST_DEFAULT = Key;
-                    #ifdef ENABLE_FEAT_F4HWN_RESUME_STATE
-                        SETTINGS_WriteCurrentState();
-                    #endif
-                    break;
-                default:
-                    break;
-            }
-            return;
-            */
-
             INPUTBOX_Append(Key);
 
             /* Wait until exactly two digits are entered */
@@ -537,8 +518,26 @@ static void MAIN_Key_DIGITS(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
             /* 00 = ALL scan lists */
             if (value == 0)
             {
-                gEeprom.SCAN_LIST_DEFAULT = MR_CHANNELS_LIST + 1;
+                gEeprom.SCAN_LIST_DEFAULT = SCAN_LIST_MODE_ALL;
                 UI_MAIN_NotifyScanListChanged();
+            #ifdef ENABLE_FEAT_F4HWN_RESUME_STATE
+                SETTINGS_WriteCurrentState();
+            #endif
+                return;
+            }
+
+            /* 25 = saved MIX selection */
+            if (value == SCAN_LIST_MIX_SHORTCUT)
+            {
+                gEeprom.SCAN_LIST_DEFAULT = SCAN_LIST_MODE_MIX;
+
+                if (!RADIO_CheckValidList(SCAN_LIST_MODE_MIX))
+                {
+                    gBeepToPlay = BEEP_500HZ_60MS_DOUBLE_BEEP_OPTIONAL;
+                    RADIO_NextValidList(1);
+                }
+                UI_MAIN_NotifyScanListChanged();
+
             #ifdef ENABLE_FEAT_F4HWN_RESUME_STATE
                 SETTINGS_WriteCurrentState();
             #endif
@@ -866,6 +865,7 @@ static void MAIN_Key_MENU(bool bKeyPressed, bool bKeyHeld)
             #endif
 
             gFlagRefreshSetting = true;
+            gScanMixEditorActive = false;
             gRequestDisplayScreen = DISPLAY_MENU;
 #ifdef ENABLE_FEAT_F4HWN_MENU_CAT
             gMenuLevel  = MENU_LEVEL_CAT;
@@ -931,7 +931,10 @@ static void MAIN_Key_STAR(bool bKeyPressed, bool bKeyHeld)
     
     if (!gWasFKeyPressed) // pressed without the F-key
     {   
-        if (gScanStateDir == SCAN_OFF 
+        if (gScanStateDir == SCAN_OFF
+#ifdef ENABLE_FEAT_F4HWN_FULL_WATCH
+            && gEeprom.DUAL_WATCH != DUAL_WATCH_FULL
+#endif
 #ifdef ENABLE_NOAA
             && !IS_NOAA_CHANNEL(gTxVfo->CHANNEL_SAVE)
 #endif
@@ -1017,6 +1020,12 @@ static void MAIN_Key_UP_DOWN(bool bKeyPressed, bool bKeyHeld, int8_t Direction)
     }
 
     if (gScanStateDir == SCAN_OFF) {
+#ifdef ENABLE_FEAT_F4HWN_FULL_WATCH
+        // Navigate from the displayed priority; the normal reload ends the swap.
+        const VFO_Info_t *displayVfo = APP_GetFullWatchDisplayVfo(gEeprom.TX_VFO);
+        if (displayVfo != NULL)
+            Channel = displayVfo->CHANNEL_SAVE;
+#endif
 #ifdef ENABLE_NOAA
         if (!IS_NOAA_CHANNEL(Channel))
 #endif
@@ -1039,7 +1048,7 @@ static void MAIN_Key_UP_DOWN(bool bKeyPressed, bool bKeyHeld, int8_t Direction)
             Next = RADIO_FindNextChannel(Channel + Direction, Direction, false, 0);
             if (Next == 0xFFFF)
                 return;
-            if (Channel == Next)
+            if (Channel == Next && gEeprom.ScreenChannel[gEeprom.TX_VFO] == Next)
                 return;
             gEeprom.MrChannel[gEeprom.TX_VFO] = Next;
             gEeprom.ScreenChannel[gEeprom.TX_VFO] = Next;

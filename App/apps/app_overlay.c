@@ -38,6 +38,9 @@
 #include "k5viewer.h"
 #endif
 #include "app/app.h"
+#ifdef ENABLE_FEAT_F4HWN_RXTX_LOG
+#include "app/rxtx_log.h"
+#endif
 #include "ui/helper.h"
 #include "ui/main.h"
 #include "ui/status.h"
@@ -47,29 +50,76 @@
 #include "functions.h"
 #include "frequencies.h"
 #include "radio.h"
+#include "scheduler.h"
 #include "helper/battery.h"
 #include "settings.h"
 #include "misc.h"   /* dBmCorrTable */
+#ifdef ENABLE_FEAT_F4HWN_OVERLAY_INFO
+#include "version.h"
+#include "stack_usage.h"
+#endif
 
-_Static_assert(sizeof(app_header_t) == 64, "app_header_t must be 64 bytes");
+_Static_assert(sizeof(app_header_t) == 64u && _Alignof(app_header_t) == 4u,
+               "app_header_t must stay 64 bytes with word alignment");
+_Static_assert(offsetof(app_header_t, magic) == 0u &&
+               offsetof(app_header_t, hdr_version) == 4u &&
+               offsetof(app_header_t, abi_major) == 6u &&
+               offsetof(app_header_t, api_min) == 7u &&
+               offsetof(app_header_t, code_size) == 8u &&
+               offsetof(app_header_t, code_crc32) == 12u &&
+               offsetof(app_header_t, entry_off) == 16u &&
+               offsetof(app_header_t, flags) == 18u &&
+               offsetof(app_header_t, name) == 20u &&
+               offsetof(app_header_t, version) == 36u &&
+               offsetof(app_header_t, link_vma) == 52u &&
+               offsetof(app_header_t, required_caps) == 56u &&
+               offsetof(app_header_t, asset_size) == 60u &&
+               offsetof(app_header_t, asset_crc) == 62u,
+               "FAP1 field offsets must match existing apps and host tools");
 _Static_assert(sizeof(app_api_t) <= UINT16_MAX, "app_api_t size field overflow");
+_Static_assert(APP_ASSET_OFFSET + APP_ASSET_MAX == APP_CODE_OFFSET,
+               "assets must end where the code sector starts");
+_Static_assert(APP_ASSET_MAX <= APP_OVERLAY_MAX,
+               "assets are CRC-checked through the overlay buffer");
 
 enum {
     APP_AVAILABLE_CAPS = 0u
 #ifdef ENABLE_FMRADIO
                        | APP_CAP_FM
 #endif
-#ifdef ENABLE_FEAT_F4HWN_OVERLAY_TRIVFO
-                       | APP_CAP_TRIVFO
-#endif
 #ifdef ENABLE_FEAT_F4HWN_OVERLAY_BEAM
-                       | APP_CAP_BEAM
+                       | APP_CAP_BEAM2
+#endif
+#ifdef ENABLE_FEAT_F4HWN_OVERLAY_INFO
+                       | APP_CAP_SYSINFO
 #endif
 };
 
+/* Keep the small zero-initialized state together so callbacks can address it
+ * from one base. The nonzero RNG seed stays separate to keep this in .bss. */
+static struct {
+    uint16_t asset_size;
+#ifdef ENABLE_FEAT_F4HWN_OVERLAY_BEAM
+    uint16_t beam_pending_channel;
+#endif
+    uint8_t run_slot;
+    uint8_t cfg_len;       /* staged length; 0 = nothing to commit */
+    bool allow_screen_saver;
+    bool screen_saver_wake;
+#ifdef ENABLE_FMRADIO
+    bool fm_dirty;
+#endif
+#ifdef ENABLE_FEAT_F4HWN_OVERLAY_BEAM
+    bool beam_dirty;
+#endif
+    bool shortcuts_cached;
+    uint8_t shortcut_mask;
+    uint8_t shortcut_slots[4];
+    uint8_t slot_revision;
+    uint8_t cfg_buf[16];
+} app_state;
+
 /* ---- ABI wrappers: the few resident calls that are not a direct signature match ---- */
-static bool app_allow_screen_saver;
-static bool app_screen_saver_wake;
 
 static void app_backlight_on(void)
 {
@@ -79,7 +129,7 @@ static void app_backlight_on(void)
 
 static void app_backlight_update(void)
 {
-    APP_ModalBacklightTick(app_allow_screen_saver);
+    APP_ModalBacklightTick(app_state.allow_screen_saver);
 }
 
 static uint8_t app_get_key(void)
@@ -91,9 +141,9 @@ static uint8_t app_get_key(void)
 #endif
     const KEY_Code_t key = KEYBOARD_GetKey();
 
-    if (app_screen_saver_wake) {
+    if (app_state.screen_saver_wake) {
         if (key == KEY_INVALID)
-            app_screen_saver_wake = false;
+            app_state.screen_saver_wake = false;
         return APP_KEY_INVALID;
     }
 
@@ -112,7 +162,7 @@ static uint8_t app_get_key(void)
     if (key == KEY_PTT)
         return APP_KEY_PTT;
 
-    app_screen_saver_wake = true;
+    app_state.screen_saver_wake = true;
     return APP_KEY_WAKE;
 }
 
@@ -139,6 +189,11 @@ static int8_t  app_nav_dir(uint8_t key)
 
     return gEeprom.SET_NAV ? direction : -direction;
 }
+
+#ifdef ENABLE_FEAT_F4HWN_OVERLAY_INFO
+extern uint8_t _eflash_used;
+extern uint8_t _ebss;
+#endif
 static void    app_led(bool on)        { BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, on); }
 
 static void app_play_tone(uint16_t tone, uint16_t ms)
@@ -149,414 +204,14 @@ static void app_play_tone(uint16_t tone, uint16_t ms)
     AUDIO_AudioPathOff();
 }
 
-#ifdef ENABLE_FEAT_F4HWN_OVERLAY_TRIVFO
-/* ---- optional resident triple-VFO engine --------------------------------
- * The overlay owns the UI and key timing, while this resident engine owns all
- * radio details.  Keeping VFO_Info_t and BK4819 sequencing on this side makes
- * the app independent of feature-dependent firmware layouts. */
-#define APP_TRIVFO_COUNT          3u
-#define APP_TRIVFO_TUNE_TICKS     5u    /* 100 ms at one tick / 20 ms */
-#define APP_TRIVFO_TX_HOLD_TICKS 125u   /* keep the existing 2.5 s TX return */
-
-static VFO_Info_t  app_trivfo_c;
-static VFO_Info_t *app_trivfo_saved_rx;
-static VFO_Info_t *app_trivfo_saved_tx;
-static VFO_Info_t *app_trivfo_saved_current;
-static uint8_t     app_trivfo_selected;
-static uint8_t     app_trivfo_pre_rx_selected;
-static uint8_t     app_trivfo_current;
-static uint8_t     app_trivfo_settle;
-static uint16_t    app_trivfo_hold;
-static uint8_t     app_trivfo_candidate_wait;
-static uint32_t    app_trivfo_tx_ticks;
-static bool        app_trivfo_running;
-static bool        app_trivfo_receiving;
-static bool        app_trivfo_transmitting;
-static bool        app_trivfo_sql_open;
-static bool        app_trivfo_ctcss_ok;
-static bool        app_trivfo_cdcss_ok;
-static bool        app_trivfo_ab_dirty;
-static bool        app_trivfo_restore_selection;
-static bool        app_trivfo_onepush_stop_armed;
-static uint8_t     app_trivfo_freq_dirty;
-
-static void app_trivfo_end_tx(void);
-
-static VFO_Info_t *app_trivfo_vfo(uint8_t vfo)
-{
-    return vfo < 2u ? &gEeprom.VfoInfo[vfo] : &app_trivfo_c;
-}
-
-static bool app_trivfo_load_memory(VFO_Info_t *vfo, uint16_t channel)
-{
-    ChannelScanDisplayInfo_t info;
-    if (!IS_MR_CHANNEL(channel) ||
-        !SETTINGS_FetchChannelScanDisplayInfo(channel, &info))
-        return false;
-
-    RADIO_InitInfo(vfo, channel, info.rx.Frequency);
-    vfo->freq_config_RX              = info.rx;
-    vfo->freq_config_TX              = info.tx;
-    vfo->TX_OFFSET_FREQUENCY         = info.offset;
-    vfo->StepFrequency               = info.stepFrequency;
-    vfo->STEP_SETTING                = info.stepSetting;
-    vfo->Modulation                  = info.modulation;
-    vfo->TX_OFFSET_FREQUENCY_DIRECTION = info.txOffsetFrequencyDirection;
-    vfo->OUTPUT_POWER                = info.outputPower;
-    vfo->FrequencyReverse            = info.frequencyReverse;
-    vfo->CHANNEL_BANDWIDTH           = info.channelBandwidth;
-    vfo->BUSY_CHANNEL_LOCK           = info.busyChannelLock;
-    vfo->TX_LOCK                     = info.txLock;
-#ifdef ENABLE_DTMF_CALLING
-    vfo->DTMF_DECODING_ENABLE        = info.dtmfDecodingEnable;
-#endif
-    vfo->DTMF_PTT_ID_TX_MODE         = info.dtmfPttIdTxMode;
-    vfo->Band                        = FREQUENCY_GetBand(vfo->freq_config_RX.Frequency);
-    vfo->Compander                   = MR_GetChannelAttributes(channel)->compander;
-    SETTINGS_FetchChannelName(vfo->Name, channel);
-    vfo->pRX = vfo->FrequencyReverse ? &vfo->freq_config_TX : &vfo->freq_config_RX;
-    vfo->pTX = vfo->FrequencyReverse ? &vfo->freq_config_RX : &vfo->freq_config_TX;
-    RADIO_ConfigureSquelchAndOutputPower(vfo);
-    return true;
-}
-
-static uint16_t app_trivfo_next_channel(uint16_t channel, int8_t direction, uint8_t vfo)
-{
-    if (direction == 0)
-        direction = 1;
-    channel = RADIO_FindNextChannel((uint16_t)(channel + direction), direction,
-                                    false, vfo < 2u ? vfo : 0u);
-    return channel;
-}
-
-static void app_trivfo_tune(uint8_t vfo)
-{
-    app_trivfo_current = vfo % APP_TRIVFO_COUNT;
-    gRxVfo = app_trivfo_vfo(app_trivfo_current);
-    gCurrentVfo = gRxVfo;
-    app_trivfo_receiving = false;
-    app_trivfo_sql_open = false;
-    app_trivfo_ctcss_ok = false;
-    app_trivfo_cdcss_ok = false;
-    app_trivfo_candidate_wait = 0;
-    app_trivfo_settle = APP_TRIVFO_TUNE_TICKS;
-    AUDIO_AudioPathOff();
-    gEnableSpeaker = false;
-    RADIO_SetupRegisters(false);
-    FUNCTION_Init();
-}
-
-static void app_trivfo_poll_irq(void)
-{
-    while (BK4819_ReadRegister(BK4819_REG_0C) & 1u) {
-        BK4819_WriteRegister(BK4819_REG_02, 0);
-        const uint16_t irq = BK4819_ReadRegister(BK4819_REG_02);
-        if (irq & BK4819_REG_02_SQUELCH_LOST)  app_trivfo_sql_open = true;
-        if (irq & BK4819_REG_02_SQUELCH_FOUND) {
-            app_trivfo_sql_open = false;
-            app_trivfo_ctcss_ok = false;
-            app_trivfo_cdcss_ok = false;
-        }
-
-        /* A BK4819 CSS interrupt is a transition, not a persistent level.
-         * Depending on the silicon revision and the configured polarity, the
-         * first transition can be reported as FOUND or LOST.  MAIN keeps the
-         * decoder state across both transitions; do the same here and use any
-         * CSS transition as proof that the configured decoder has acquired the
-         * signal.  A wrong CTCSS/DCS does not generate either transition. */
-        if (irq & (BK4819_REG_02_CTCSS_LOST | BK4819_REG_02_CTCSS_FOUND))
-            app_trivfo_ctcss_ok = true;
-        if (irq & (BK4819_REG_02_CDCSS_LOST | BK4819_REG_02_CDCSS_FOUND))
-            app_trivfo_cdcss_ok = true;
-    }
-}
-
-static bool app_trivfo_qualified(void)
-{
-    const VFO_Info_t *vfo = app_trivfo_vfo(app_trivfo_current);
-    if (!app_trivfo_sql_open)
-        return false;
-    if (vfo->Modulation != MODULATION_FM || vfo->pRX->CodeType == CODE_TYPE_OFF)
-        return true;
-    if (vfo->pRX->CodeType == CODE_TYPE_CONTINUOUS_TONE)
-        return app_trivfo_ctcss_ok;
-    return app_trivfo_cdcss_ok;
-}
-
-static uint16_t app_trivfo_enter(uint16_t c_channel)
-{
-    app_trivfo_saved_rx      = gRxVfo;
-    app_trivfo_saved_tx      = gTxVfo;
-    app_trivfo_saved_current = gCurrentVfo;
-
-    if (!IS_MR_CHANNEL(c_channel) ||
-        !SETTINGS_FetchChannelScanInfo(c_channel, NULL, NULL)) {
-        uint16_t start = IS_MR_CHANNEL(gEeprom.ScreenChannel[1])
-                       ? gEeprom.ScreenChannel[1] : gEeprom.MrChannel[1];
-        c_channel = app_trivfo_next_channel(start, 1, 2);
-    }
-    if (c_channel == 0xFFFFu || !app_trivfo_load_memory(&app_trivfo_c, c_channel)) {
-        c_channel = RADIO_FindNextChannel(MR_CHANNEL_FIRST, RADIO_CHANNEL_UP, false, 0);
-        if (c_channel != 0xFFFFu)
-            app_trivfo_load_memory(&app_trivfo_c, c_channel);
-    }
-
-    const uint8_t initial_vfo = gEeprom.TX_VFO < 2u ? gEeprom.TX_VFO : 0u;
-    app_trivfo_selected = initial_vfo;
-    app_trivfo_pre_rx_selected = initial_vfo;
-    app_trivfo_restore_selection = false;
-    app_trivfo_hold = 0;
-    app_trivfo_running = true;
-    app_trivfo_transmitting = false;
-    app_trivfo_onepush_stop_armed = false;
-    app_trivfo_ab_dirty = false;
-    app_trivfo_freq_dirty = 0;
-    app_trivfo_tune(initial_vfo);
-    return c_channel;
-}
-
-static void app_trivfo_leave(void)
-{
-    if (!app_trivfo_running)
-        return;
-    if (app_trivfo_transmitting)
-        app_trivfo_end_tx();
-    AUDIO_AudioPathOff();
-    gEnableSpeaker = false;
-    app_trivfo_running = false;
-    app_trivfo_transmitting = false;
-    gRxVfo = app_trivfo_saved_rx;
-    gTxVfo = app_trivfo_saved_tx;
-    gCurrentVfo = app_trivfo_saved_current;
-}
-
-static void app_trivfo_get(uint8_t index, app_trivfo_info_t *info)
-{
-    if (info == NULL || index >= APP_TRIVFO_COUNT)
-        return;
-    const VFO_Info_t *vfo = app_trivfo_vfo(index);
-    memset(info, 0, sizeof(*info));
-    info->frequency  = vfo->pRX->Frequency;
-    info->channel    = vfo->CHANNEL_SAVE;
-    info->step       = vfo->StepFrequency;
-    if (vfo->pRX->CodeType == CODE_TYPE_CONTINUOUS_TONE)
-        info->code_value = CTCSS_Options[vfo->pRX->Code];
-    else if (vfo->pRX->CodeType == CODE_TYPE_DIGITAL ||
-             vfo->pRX->CodeType == CODE_TYPE_REVERSE_DIGITAL)
-        info->code_value = DCS_Options[vfo->pRX->Code];
-    info->rssi_dbm   = (index == app_trivfo_current)
-                     ? BK4819_GetRSSI_dBm() + dBmCorrTable[vfo->Band] : -160;
-    info->modulation = vfo->Modulation;
-    info->power      = vfo->OUTPUT_POWER == OUTPUT_POWER_USER
-                     ? (uint8_t)(gSetting_set_pwr + 1u) : vfo->OUTPUT_POWER;
-    info->bandwidth  = vfo->CHANNEL_BANDWIDTH;
-#ifdef ENABLE_FEAT_F4HWN_NARROWER
-    if (info->bandwidth == BANDWIDTH_NARROW && gSetting_set_nfm == 1)
-        info->bandwidth++;
-#endif
-    info->code_type  = vfo->pRX->CodeType;
-    info->code       = vfo->pRX->Code;
-    info->offset_direction = (vfo->freq_config_RX.Frequency != vfo->freq_config_TX.Frequency)
-                           ? vfo->TX_OFFSET_FREQUENCY_DIRECTION : 0u;
-    info->reverse    = vfo->FrequencyReverse;
-    info->squelch    = gEeprom.SQUELCH_LEVEL;
-    if (index == app_trivfo_selected) info->flags |= APP_TRIVFO_SELECTED;
-    if (index == app_trivfo_current)  info->flags |= APP_TRIVFO_TUNED;
-    if (index == app_trivfo_current && app_trivfo_receiving) info->flags |= APP_TRIVFO_RECEIVING;
-    if (index == app_trivfo_selected && app_trivfo_transmitting) info->flags |= APP_TRIVFO_TX;
-    if (vfo->OUTPUT_POWER == OUTPUT_POWER_USER) info->flags |= APP_TRIVFO_USER_POWER;
-#ifdef ENABLE_AUDIO_BAR
-    if (gSetting_mic_bar) info->flags |= APP_TRIVFO_AUDIO_BAR;
-#endif
-    if (gSetting_set_gui) info->flags |= APP_TRIVFO_GUI_CLASSIC;
-    if (gSetting_set_ptt_session) info->flags |= APP_TRIVFO_PTT_ONEPUSH;
-    if (IS_MR_CHANNEL(vfo->CHANNEL_SAVE))
-        memcpy(info->name, vfo->Name, sizeof(info->name) - 1u);
-}
-
-static void app_trivfo_select(uint8_t vfo)
-{
-    if (vfo < APP_TRIVFO_COUNT)
-        app_trivfo_selected = vfo;
-}
-
-static uint16_t app_trivfo_step(uint8_t index, int8_t direction)
-{
-    if (index >= APP_TRIVFO_COUNT || app_trivfo_transmitting)
-        return 0xFFFFu;
-    VFO_Info_t *vfo = app_trivfo_vfo(index);
-
-    if (IS_FREQ_CHANNEL(vfo->CHANNEL_SAVE)) {
-        if (direction == 0)
-            direction = 1;
-        const uint32_t frequency = APP_SetFrequencyByStep(vfo, direction);
-        if (RX_freq_check(frequency) < 0)
-            return 0xFFFFu;
-
-        vfo->freq_config_RX.Frequency = frequency;
-        RADIO_ApplyOffset(vfo);
-        RADIO_ConfigureSquelchAndOutputPower(vfo);
-        if (index < 2u)
-            app_trivfo_freq_dirty |= (uint8_t)(1u << index);
-        app_trivfo_hold = 0;
-        app_trivfo_tune(index);
-        return vfo->CHANNEL_SAVE;
-    }
-
-    uint16_t base = IS_MR_CHANNEL(vfo->CHANNEL_SAVE) ? vfo->CHANNEL_SAVE
-                  : (index < 2u ? gEeprom.MrChannel[index] : gEeprom.MrChannel[1]);
-    const uint16_t channel = app_trivfo_next_channel(base, direction, index);
-    if (channel == 0xFFFFu)
-        return channel;
-    if (index < 2u) {
-        gEeprom.ScreenChannel[index] = channel;
-        gEeprom.MrChannel[index] = channel;
-        RADIO_ConfigureChannel(index, VFO_CONFIGURE_RELOAD);
-        app_trivfo_ab_dirty = true;
-    } else {
-        app_trivfo_load_memory(&app_trivfo_c, channel);
-    }
-    app_trivfo_hold = 0;
-    app_trivfo_tune(index);
-    return channel;
-}
-
-static void app_trivfo_end_tx(void)
-{
-    if (!app_trivfo_transmitting)
-        return;
-    RADIO_SendEndOfTransmission();
-    app_trivfo_transmitting = false;
-    app_trivfo_onepush_stop_armed = false;
-    BK4819_ToggleGpioOut(BK4819_GPIO5_PIN1_RED, false);
-    app_trivfo_hold = APP_TRIVFO_TX_HOLD_TICKS;
-    app_trivfo_tune(app_trivfo_selected);
-}
-
-static uint8_t app_trivfo_tick(void)
-{
-    if (!app_trivfo_running)
-        return APP_TRIVFO_SCAN;
-    if (app_trivfo_transmitting) {
-        const uint32_t timeout = ((uint32_t)gEeprom.TX_TIMEOUT_TIMER + 1u) * 250u;
-        if (++app_trivfo_tx_ticks >= timeout) {
-            app_trivfo_end_tx();
-            return APP_TRIVFO_HOLD;
-        }
-        return APP_TRIVFO_TX_STATE;
-    }
-
-    app_trivfo_poll_irq();
-    if (app_trivfo_settle > 0) {
-        app_trivfo_settle--;
-        return APP_TRIVFO_SCAN;
-    }
-
-    const bool qualified = app_trivfo_qualified();
-    if (qualified) {
-        app_trivfo_hold = 0;
-        if (!app_trivfo_receiving) {
-            if (app_trivfo_selected != app_trivfo_current) {
-                app_trivfo_pre_rx_selected = app_trivfo_selected;
-                app_trivfo_restore_selection = true;
-                app_trivfo_selected = app_trivfo_current;
-            }
-            app_trivfo_receiving = true;
-            AUDIO_AudioPathOn();
-            gEnableSpeaker = true;
-            BK4819_SetRxAudioGain();
-            /* BK4819_SetupSquelch() ends by selecting AF_MUTE. Mirror
-             * APP_StartListening(): restore the channel demodulator only once
-             * the carrier/CSS has qualified. */
-            RADIO_SetModulation(gRxVfo->Modulation);
-            BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, true);
-        }
-        return APP_TRIVFO_RX;
-    }
-
-    if (app_trivfo_receiving) {
-        app_trivfo_receiving = false;
-        AUDIO_AudioPathOff();
-        gEnableSpeaker = false;
-        BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, false);
-        /* Use the same receive-response dwell as resident DWR.  The resident
-         * value is expressed in 10 ms ticks; Triple VFO ticks every 20 ms. */
-        app_trivfo_hold = (dual_watch_count_after_2_10ms + 1u) / 2u;
-        app_trivfo_candidate_wait = 50u;
-    }
-    if (app_trivfo_hold > 0) {
-        app_trivfo_hold--;
-        if (app_trivfo_hold == 0 && app_trivfo_restore_selection) {
-            app_trivfo_selected = app_trivfo_pre_rx_selected;
-            app_trivfo_restore_selection = false;
-        }
-        return APP_TRIVFO_HOLD;
-    }
-
-    /* Like resident dual watch, give a coded carrier time to acquire its CSS.
-     * A wrong tone/code must not monopolise the receiver indefinitely. */
-    if (app_trivfo_sql_open && app_trivfo_candidate_wait < 50u) {
-        app_trivfo_candidate_wait++;
-        return APP_TRIVFO_HOLD;
-    }
-
-    app_trivfo_tune((uint8_t)((app_trivfo_current + 1u) % APP_TRIVFO_COUNT));
-    return APP_TRIVFO_SCAN;
-}
-
-static uint8_t app_trivfo_ptt(bool pressed)
-{
-    if (!app_trivfo_running)
-        return 1;
-    if (!pressed) {
-        if (!app_trivfo_transmitting)
-            return 0;
-        /* ONEPUSH mirrors the resident PTT sequence: the first release keeps
-         * TX keyed; the release following the second press ends TX. */
-        if (gSetting_set_ptt_session && !app_trivfo_onepush_stop_armed)
-            return 0;
-        app_trivfo_end_tx();
-        return 0;
-    }
-    if (app_trivfo_transmitting) {
-        if (gSetting_set_ptt_session)
-            app_trivfo_onepush_stop_armed = true;
-        return 0;
-    }
-
-    VFO_Info_t *vfo = app_trivfo_vfo(app_trivfo_selected);
-    if ((TX_freq_check(vfo->pTX->Frequency) != 0 && vfo->TX_LOCK) ||
-        vfo->Modulation != MODULATION_FM ||
-        (vfo->BUSY_CHANNEL_LOCK && app_trivfo_receiving) ||
-        gBatteryDisplayLevel == 0 || gBatteryDisplayLevel > 6)
-        return 1;
-
-    AUDIO_AudioPathOff();
-    gEnableSpeaker = false;
-    BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, false);
-    gRxVfo = gTxVfo = gCurrentVfo = vfo;
-    RADIO_SetTxParameters();
-    BK4819_ToggleGpioOut(BK4819_GPIO5_PIN1_RED, true);
-    BK4819_DisableScramble();
-    app_trivfo_current = app_trivfo_selected;
-    app_trivfo_receiving = false;
-    app_trivfo_transmitting = true;
-    app_trivfo_onepush_stop_armed = false;
-    app_trivfo_tx_ticks = 0;
-    return 0;
-}
-#endif
-
 #ifdef ENABLE_FEAT_F4HWN_OVERLAY_BEAM
 /* ---- optional BEAM radio/channel bridge -----------------------------------
- * The modal app owns the packet format, CRC, UI and state machine.  Resident
- * code only translates the stable ABI channel structure and performs the FSK
- * operations which depend on VFO_Info_t and the BK4819 driver. */
+ * The modal app owns the packet format, CRC, UI, state machine and the FSK
+ * modem (plain BK4819 register sequences through bk_read/bk_write).  Resident
+ * code only tunes the fixed channel and translates the stable ABI channel
+ * structure, the parts which depend on VFO_Info_t. */
 static VFO_Info_t app_beam_vfo;
 static app_beam_channel_t app_beam_pending;
-static uint8_t app_beam_fsk_index;
-static uint16_t app_beam_pending_channel;
-static bool app_beam_dirty;
 
 static void app_beam_prepare(void)
 {
@@ -570,14 +225,6 @@ static void app_beam_prepare(void)
     gTxVfo = &app_beam_vfo;
     gCurrentVfo = &app_beam_vfo;
     RADIO_SetupRegisters(true);
-    BK4819_SetupAircopy();
-    BK4819_ResetFSK();
-    app_beam_fsk_index = 0;
-}
-
-static void app_beam_leave(void)
-{
-    BK4819_ResetFSK();
 }
 
 /* Wire<->VFO fields that are a plain one-byte copy in BOTH directions.  Fields
@@ -662,7 +309,7 @@ static uint16_t app_beam_save(const app_beam_channel_t *in)
 
     /* Only one external-flash write can be deferred per app run.  Preserve the
        first successfully received channel if an older app tries to queue more. */
-    if (app_beam_dirty)
+    if (app_state.beam_dirty)
         return 0xFFFFu;
 
     uint16_t channel = MR_CHANNEL_FIRST;
@@ -675,8 +322,8 @@ static uint16_t app_beam_save(const app_beam_channel_t *in)
        sector-cache RAM.  Keep the pointer-free payload separate from the radio
        VFO: app_beam_prepare() may reuse that VFO before the app returns. */
     memcpy(&app_beam_pending, in, sizeof(app_beam_pending));
-    app_beam_pending_channel = channel;
-    app_beam_dirty = true;
+    app_state.beam_pending_channel = channel;
+    app_state.beam_dirty = true;
     return channel;
 }
 
@@ -684,11 +331,11 @@ static uint16_t app_beam_save(const app_beam_channel_t *in)
  * from the PY25Q16 sector cache. */
 static void app_beam_commit(void)
 {
-    if (!app_beam_dirty)
+    if (!app_state.beam_dirty)
         return;
-    app_beam_dirty = false;
+    app_state.beam_dirty = false;
 
-    const uint16_t channel = app_beam_pending_channel;
+    const uint16_t channel = app_state.beam_pending_channel;
 
     /* The overlay has returned, so the temporary radio VFO is now free to
        become the channel-save staging object. */
@@ -719,56 +366,6 @@ static void app_beam_commit(void)
     PY25Q16_InvalidateCache();
 }
 
-static void app_beam_send(uint16_t *packet)
-{
-    if (packet == NULL)
-        return;
-    RADIO_SetTxParameters();
-    BK4819_SendFSKData(packet);
-    BK4819_SetupPowerAmplifier(0, 0);
-    BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, false);
-    RADIO_SelectVfos();
-    RADIO_SetupRegisters(true);
-}
-
-static void app_beam_rx(bool start)
-{
-    app_beam_fsk_index = 0;
-    if (start)
-        BK4819_PrepareFSKReceive();
-    else
-        BK4819_ResetFSK();
-}
-
-static uint8_t app_beam_rx_poll(uint16_t *packet)
-{
-    if (packet == NULL)
-        return APP_BEAM_RX_ERROR;
-
-    while (BK4819_ReadRegister(BK4819_REG_0C) & 1u) {
-        BK4819_WriteRegister(BK4819_REG_02, 0);
-        const uint16_t irq = BK4819_ReadRegister(BK4819_REG_02);
-        if (irq & (BK4819_REG_02_FSK_FIFO_ALMOST_FULL | BK4819_REG_02_FSK_RX_FINISHED)) {
-            const unsigned words = (irq & BK4819_REG_02_FSK_RX_FINISHED)
-                                 ? (app_beam_fsk_index < 36u ? 36u - app_beam_fsk_index : 0u)
-                                 : 4u;
-            for (unsigned i = 0; i < words; i++) {
-                const uint16_t word = BK4819_ReadRegister(BK4819_REG_5F);
-                if (app_beam_fsk_index < 36u)
-                    packet[app_beam_fsk_index++] = word;
-            }
-        }
-    }
-
-    if (app_beam_fsk_index < 36u)
-        return APP_BEAM_RX_WAIT;
-
-    app_beam_fsk_index = 0;
-    const uint16_t status = BK4819_ReadRegister(BK4819_REG_0B);
-    BK4819_PrepareFSKReceive();
-    return (status & 0x0010u) ? APP_BEAM_RX_ERROR : APP_BEAM_RX_READY;
-}
-
 static void app_beam_draw(const char *status)
 {
     UI_DisplayStatus();
@@ -792,7 +389,6 @@ static void     app_set_af(uint8_t m)  { BK4819_SetAF((BK4819_AF_Type_t)m); }
 static void     app_audio_path(bool on){ if (on) AUDIO_AudioPathOn(); else AUDIO_AudioPathOff(); }
 static void     app_prepare_tone(void) { BK4819_PrepareToPlayTone(true); }
 static void     app_play_tone_raw(uint16_t hz, uint16_t ms) { BK4819_PlayToneRaw(hz, ms); }
-static void     app_tones_off_rx(void) { BK4819_TurnsOffTones_TurnsOnRX(); }
 static uint32_t app_rx_freq(void)      { return gRxVfo->pRX->Frequency; }
 
 /* ---- v2 config (deferred, flash-backed) ----
@@ -800,23 +396,83 @@ static uint32_t app_rx_freq(void)      { return gRxVfo->pRX->Frequency; }
  * reads flash at launch (ReadBuffer bypasses the overlay cache). cfg_save only stages
  * into RAM - the app runs from the sector cache, so it cannot write flash itself; the
  * loader commits the staged bytes to flash after the app returns (RMW preserves the
- * slot header). Erasing/reinstalling a slot resets its config, which is intended. */
+ * slot header), tagged with the app's name. Updating an app erases its slot: the
+ * tagged config is kept across that erase and handed back to the app of that name
+ * only, so an update keeps the app's settings while another app installed in the
+ * slot starts from its own defaults. */
 #define APP_CFG_OFFSET  0x40u    /* config area within the header sector */
-static uint8_t app_cfg_buf[16];
-static uint8_t app_cfg_len;      /* staged length; 0 = nothing to commit */
-static uint8_t app_run_slot;     /* slot of the app currently running */
+#define APP_CFG_OWNER   0x50u    /* name of the app the config belongs to */
 
 static void app_cfg_load(uint8_t *buf, uint8_t len)
 {
-    if (len > sizeof(app_cfg_buf)) len = sizeof(app_cfg_buf);
-    PY25Q16_ReadBuffer(APP_SLOT_BASE(app_run_slot) + APP_CFG_OFFSET, buf, len);
+    if (len > sizeof(app_state.cfg_buf)) len = sizeof(app_state.cfg_buf);
+    const uint32_t base = APP_SLOT_BASE(app_state.run_slot);
+    char name[APP_NAME_LEN], owner[APP_NAME_LEN];
+    PY25Q16_ReadBuffer(base + offsetof(app_header_t, name), name, sizeof(name));
+    PY25Q16_ReadBuffer(base + APP_CFG_OWNER, owner, sizeof(owner));
+    /* This app's config, or an untagged one saved before the tag existed.
+     * Another app's reads as erased flash, i.e. the app's defaults. */
+    if ((uint8_t)owner[0] == 0xFFu || !memcmp(owner, name, sizeof(name)))
+        PY25Q16_ReadBuffer(base + APP_CFG_OFFSET, buf, len);
+    else
+        memset(buf, 0xFF, len);
 }
 static void app_cfg_save(const uint8_t *buf, uint8_t len)
 {
-    if (len > sizeof(app_cfg_buf)) len = sizeof(app_cfg_buf);
-    memcpy(app_cfg_buf, buf, len);
-    app_cfg_len = len;   /* mark dirty; the loader commits after the app returns */
+    if (len > sizeof(app_state.cfg_buf)) len = sizeof(app_state.cfg_buf);
+    memcpy(app_state.cfg_buf, buf, len);
+    app_state.cfg_len = len;   /* mark dirty; the loader commits after the app returns */
 }
+
+_Static_assert(APP_CFG_OFFSET + sizeof(app_state.cfg_buf) <= APP_CFG_OWNER &&
+               APP_CFG_OWNER + APP_NAME_LEN <= APP_ASSET_OFFSET,
+               "config area overlaps its owner tag or the assets");
+
+/* ---- API level 2: time, randomness, read-only assets ---- */
+static uint32_t app_rng_state = 0x2545F491u;
+
+static uint32_t app_ticks_ms(void)
+{
+    return SCHEDULER_GetTick10ms() * 10u;
+}
+
+static uint32_t app_rand32(void)
+{
+    uint32_t x = app_rng_state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    app_rng_state = x;
+    return x;
+}
+
+/* Fold fresh entropy into the persistent state: RSSI noise LSBs, the SysTick
+ * phase of the key press that launched the app, and the 10 ms counter. */
+static void app_rng_mix(void)
+{
+    app_rng_state ^= ((uint32_t)BK4819_ReadRegister(BK4819_REG_67) << 16) ^
+                     SysTick->VAL ^ SCHEDULER_GetTick10ms();
+    if (app_rng_state == 0u)
+        app_rng_state = 0x2545F491u;
+    app_rand32();
+}
+
+static uint16_t app_asset_read(uint16_t offset, void *buf, uint16_t len)
+{
+    if (offset >= app_state.asset_size)
+        return 0;
+    if (len > app_state.asset_size - offset)
+        len = app_state.asset_size - offset;
+    PY25Q16_ReadBuffer(APP_SLOT_BASE(app_state.run_slot) + APP_ASSET_OFFSET + offset, buf, len);
+    return len;
+}
+
+/* ---- API level 2: integer division ----
+ * The run-time helpers the firmware links anyway (App/compact_div.S over
+ * libgcc's unsigned division), served as they are: their {quotient, remainder}
+ * register pair is declared as one 64-bit return value (low word = r0). */
+extern uint64_t __aeabi_idivmod(int32_t n, int32_t d);
+extern uint64_t __aeabi_uidivmod(uint32_t n, uint32_t d);
 
 /* ---- v2 battery / backlight ---- */
 static void app_draw_battery(void)
@@ -826,14 +482,6 @@ static void app_draw_battery(void)
 }
 static void app_battery_sample(void)
 {
-    /* The resident scheduler deliberately skips ADC battery updates while the
-     * PA is keyed.  Do the same for Triple VFO: sampling the loaded voltage as
-     * capacity made an 80% pack appear to fall immediately to about 16%. */
-#ifdef ENABLE_FEAT_F4HWN_OVERLAY_TRIVFO
-    if (app_trivfo_transmitting)
-        return;
-#endif
-
     BATTERY_Sample(false);
 }
 
@@ -846,7 +494,6 @@ static uint8_t app_tx_state(void)
     if (gTxVfo->Modulation != MODULATION_FM) return 1;
     return 0;
 }
-static void     app_tx_set_params(void)  { RADIO_SetTxParameters(); }
 static void     app_tx_tone(uint16_t hz) { BK4819_TransmitTone(false, hz); }
 static void     app_tx_mute(bool on)     { if (on) BK4819_EnterTxMute(); else BK4819_ExitTxMute(); }
 static void     app_tx_end(void)         { BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, false); RADIO_SetupRegisters(true); }
@@ -881,13 +528,8 @@ static void app_fm_exit(void)
     BK1080_Init0();
     BK4819_PickRXFilterPathBasedOnFrequency(gRxVfo->pRX->Frequency);   /* restore RX filter */
 }
-static void     app_fm_set_freq(uint16_t f, uint8_t b) { BK1080_SetFrequency(f, b); }
-static uint16_t app_fm_lo(uint8_t b)   { return BK1080_GetFreqLoLimit(b); }
-static uint16_t app_fm_hi(uint8_t b)   { return BK1080_GetFreqHiLimit(b); }
-static void     app_fm_mute(bool m)    { BK1080_Mute(m); }
 static int8_t   app_fm_valid(uint16_t f, uint16_t lo) { return (int8_t)FM_CheckFrequencyLock(f, lo); }
 
-static bool app_fm_dirty;   /* deferred: SETTINGS_SaveFM committed after the app returns */
 static void app_fm_state(app_fm_state_t *s, bool write)
 {
     if (write) {
@@ -904,36 +546,53 @@ static void app_fm_state(app_fm_state_t *s, bool write)
         s->sel_ch       = gEeprom.FM_SelectedChannel;
     }
 }
-static void app_fm_commit(void) { app_fm_dirty = true; }
+static void app_fm_commit(void) { app_state.fm_dirty = true; }
 #endif
 
-uint8_t APP_ValidateSlot(uint8_t slot, app_header_t *out_header)
+/* Internal callers discard the header on failure, so read directly into their
+ * aligned object without another 64-byte stack object and copy. */
+static uint8_t app_read_validated_header(uint8_t slot, app_header_t *h)
 {
     if (slot >= APP_SLOT_COUNT)
         return APP_ERR_SLOT;
 
-    app_header_t h;
-    PY25Q16_ReadBuffer(APP_SLOT_BASE(slot), &h, sizeof(h));
+    PY25Q16_ReadBuffer(APP_SLOT_BASE(slot), h, sizeof(*h));
 
-    if (h.magic != APP_MAGIC)               return APP_ERR_MAGIC;
-    if (h.hdr_version != APP_HDR_VERSION)    return APP_ERR_MAGIC;
-    if (h.abi_major != APP_ABI_MAJOR || h.api_min == 0u ||
-        h.api_min > APP_API_LEVEL)           return APP_ERR_ABI;
-    if (!(h.flags & APP_FLAG_COMMITTED))     return APP_ERR_NOT_COMMITTED;
-    if (h.required_caps & ~APP_AVAILABLE_CAPS) return APP_ERR_CAP;
-    if (h.code_size < 2u || h.code_size > APP_OVERLAY_MAX ||
-        (uint32_t)h.entry_off > h.code_size - 2u ||   /* leave room for a 2-byte Thumb insn */
-        (h.entry_off & 1u) != 0u)                     /* entry must be Thumb-aligned (even) */
+    if (h->magic != APP_MAGIC)               return APP_ERR_MAGIC;
+    if (h->hdr_version != APP_HDR_VERSION)    return APP_ERR_MAGIC;
+    if (h->abi_major != APP_ABI_MAJOR || h->api_min == 0u ||
+        h->api_min > APP_API_LEVEL)           return APP_ERR_ABI;
+    if (!(h->flags & APP_FLAG_COMMITTED))     return APP_ERR_NOT_COMMITTED;
+    if (h->required_caps & ~APP_AVAILABLE_CAPS) return APP_ERR_CAP;
+    if (h->code_size < 2u || h->code_size > APP_OVERLAY_MAX ||
+        (uint32_t)h->entry_off > h->code_size - 2u ||   /* leave room for a 2-byte Thumb insn */
+        (h->entry_off & 1u) != 0u ||                   /* entry must be Thumb-aligned (even) */
+        h->asset_size > APP_ASSET_MAX)
         return APP_ERR_SIZE;
 
-    if (out_header)
-        *out_header = h;
     return APP_OK;
 }
 
-static bool app_shortcuts_cached;
-static uint8_t app_shortcut_mask;
-static uint8_t app_shortcut_slots[4];
+uint8_t APP_ValidateSlot(uint8_t slot, app_header_t *out_header)
+{
+    app_header_t h;
+    const uint8_t rc = app_read_validated_header(slot, &h);
+    /* Preserve the public API: a failed validation leaves out_header intact. */
+    if (rc == APP_OK && out_header)
+        *out_header = h;
+    return rc;
+}
+
+uint8_t APP_SlotRevision(void)
+{
+    return app_state.slot_revision;
+}
+
+void APP_NotifySlotChanged(void)
+{
+    app_state.shortcuts_cached = false;
+    app_state.slot_revision++;
+}
 
 static int8_t app_shortcut_index(uint8_t shortcut)
 {
@@ -946,35 +605,35 @@ static int8_t app_shortcut_index(uint8_t shortcut)
 
 static void app_cache_shortcuts(void)
 {
-    if (app_shortcuts_cached)
+    if (app_state.shortcuts_cached)
         return;
 
-    app_shortcut_mask = 0;
+    app_state.shortcut_mask = 0;
     const uint32_t overlay_vma = (uint32_t)PY25Q16_OverlayBuffer();
 
     for (uint8_t slot = 0; slot < APP_SLOT_COUNT; slot++) {
         app_header_t h;
-        if (APP_ValidateSlot(slot, &h) != APP_OK || h.link_vma != overlay_vma)
+        if (app_read_validated_header(slot, &h) != APP_OK || h.link_vma != overlay_vma)
             continue;
 
         const uint8_t shortcut = (uint8_t)((h.flags & APP_FLAG_SHORTCUT_MASK) >>
                                            APP_FLAG_SHORTCUT_SHIFT);
         const int8_t index = app_shortcut_index(shortcut);
         if (index >= 0) {
-            if (!(app_shortcut_mask & shortcut)) {
-                app_shortcut_mask |= shortcut;
-                app_shortcut_slots[index] = slot;
+            if (!(app_state.shortcut_mask & shortcut)) {
+                app_state.shortcut_mask |= shortcut;
+                app_state.shortcut_slots[index] = slot;
             }
         }
     }
 
-    app_shortcuts_cached = true;
+    app_state.shortcuts_cached = true;
 }
 
 uint8_t APP_OverlayShortcutMask(void)
 {
     app_cache_shortcuts();
-    return app_shortcut_mask;
+    return app_state.shortcut_mask;
 }
 
 uint8_t APP_LaunchOverlayShortcut(uint8_t shortcut)
@@ -984,8 +643,8 @@ uint8_t APP_LaunchOverlayShortcut(uint8_t shortcut)
         return APP_ERR_MAGIC;
 
     app_cache_shortcuts();
-    return (app_shortcut_mask & shortcut)
-         ? APP_LaunchOverlay(app_shortcut_slots[index])
+    return (app_state.shortcut_mask & shortcut)
+         ? APP_LaunchOverlay(app_state.shortcut_slots[index])
          : APP_ERR_MAGIC;
 }
 
@@ -993,11 +652,11 @@ uint8_t APP_SlotInfo(uint8_t slot, app_header_t *out_header)
 {
     if (slot >= APP_SLOT_COUNT)
         return APP_ERR_SLOT;
-    app_header_t h;
-    PY25Q16_ReadBuffer(APP_SLOT_BASE(slot), &h, sizeof(h));
-    if (out_header)
-        *out_header = h;
-    return (h.magic == APP_MAGIC) ? APP_OK : APP_ERR_MAGIC;
+    app_header_t local;
+    app_header_t *h = out_header ? out_header : &local;
+    /* Slot info returns the raw header even when its magic is invalid. */
+    PY25Q16_ReadBuffer(APP_SLOT_BASE(slot), h, sizeof(*h));
+    return (h->magic == APP_MAGIC) ? APP_OK : APP_ERR_MAGIC;
 }
 
 /* All services are immutable.  Keeping the table in flash avoids rebuilding a
@@ -1037,7 +696,7 @@ static const app_api_t app_api = {
     .audio_path       = app_audio_path,
     .prepare_tone     = app_prepare_tone,
     .play_tone_raw    = app_play_tone_raw,
-    .tones_off_rx     = app_tones_off_rx,
+    .tones_off_rx     = BK4819_TurnsOffTones_TurnsOnRX,
     .rx_freq          = app_rx_freq,
     .cfg_load         = app_cfg_load,
     .cfg_save         = app_cfg_save,
@@ -1048,7 +707,7 @@ static const app_api_t app_api = {
     .audio_scope      = UI_DisplayAudioScopeOverlay,
     .status_line      = gStatusLine,
     .tx_state         = app_tx_state,
-    .tx_set_params    = app_tx_set_params,
+    .tx_set_params    = RADIO_SetTxParameters,
     .tx_tone          = app_tx_tone,
     .tx_mute          = app_tx_mute,
     .tx_end           = app_tx_end,
@@ -1059,41 +718,50 @@ static const app_api_t app_api = {
 #ifdef ENABLE_FMRADIO
     .fm_enter         = app_fm_enter,
     .fm_exit          = app_fm_exit,
-    .fm_set_freq      = app_fm_set_freq,
-    .fm_lo            = app_fm_lo,
-    .fm_hi            = app_fm_hi,
-    .fm_mute          = app_fm_mute,
+    .fm_set_freq      = BK1080_SetFrequency,
+    .fm_lo            = BK1080_GetFreqLoLimit,
+    .fm_hi            = BK1080_GetFreqHiLimit,
+    .fm_mute          = BK1080_Mute,
     .fm_valid         = app_fm_valid,
     .fm_channels      = gFM_Channels,
     .fm_state         = app_fm_state,
     .fm_commit        = app_fm_commit,
 #endif
     .nav_dir          = app_nav_dir,
-#ifdef ENABLE_FEAT_F4HWN_OVERLAY_TRIVFO
-    .trivfo_enter     = app_trivfo_enter,
-    .trivfo_leave     = app_trivfo_leave,
-    .trivfo_get       = app_trivfo_get,
-    .trivfo_select    = app_trivfo_select,
-    .trivfo_step      = app_trivfo_step,
-    .trivfo_tick      = app_trivfo_tick,
-    .trivfo_ptt       = app_trivfo_ptt,
-#endif
 #ifdef ENABLE_FEAT_F4HWN_OVERLAY_BEAM
     .beam_prepare     = app_beam_prepare,
-    .beam_leave       = app_beam_leave,
+    /* APP_CAP_BEAM2: beam_leave, beam_send, beam_rx and beam_rx_poll stay
+     * NULL, the app drives the FSK modem through bk_read/bk_write. */
     .beam_get         = app_beam_get,
     .beam_save        = app_beam_save,
-    .beam_send        = app_beam_send,
-    .beam_rx          = app_beam_rx,
-    .beam_rx_poll     = app_beam_rx_poll,
     .beam_draw        = app_beam_draw,
+#endif
+    .ticks_ms         = app_ticks_ms,
+    .rand32           = app_rand32,
+    .asset_read       = app_asset_read,
+    .idivmod          = __aeabi_idivmod,
+    .uidivmod         = __aeabi_uidivmod,
+#ifdef ENABLE_FEAT_F4HWN_OVERLAY_INFO
+    .sys_edition         = Edition,
+    .sys_version         = DisplayVersion,
+    .sys_build_date      = BuildDate,
+    .sys_build_time      = BuildTime,
+    .sys_build_commit    = BuildCommit,
+    .sys_flash_end       = &_eflash_used,
+    .sys_ram_end         = &_ebss,
+    .sys_battery_voltage = &gBatteryVoltageAverage,
+    .sys_battery_type    = &gEeprom.BATTERY_TYPE,
+    .sys_battery_percent = BATTERY_VoltsToPercent,
+    .sys_storage_read    = PY25Q16_ReadBuffer,
+    .sys_stack_free_now  = STACK_FreeNow,
+    .sys_stack_free_min  = STACK_FreeMinimum,
 #endif
 };
 
 uint8_t APP_LaunchOverlay(uint8_t slot)
 {
     app_header_t h;
-    uint8_t rc = APP_ValidateSlot(slot, &h);
+    uint8_t rc = app_read_validated_header(slot, &h);
     if (rc != APP_OK)
         return rc;
 
@@ -1105,15 +773,33 @@ uint8_t APP_LaunchOverlay(uint8_t slot)
     if (h.link_vma != (uint32_t)ws)
         return APP_ERR_VMA;
 
+    /* Flush and suspend RF logging before the sector cache becomes executable
+     * app code. Both a pending RX and an app-owned TX could otherwise write a
+     * log entry through the same 4 KiB buffer and overwrite the running app. */
+#ifdef ENABLE_FEAT_F4HWN_RXTX_LOG
+    RXTX_LOG_Suspend();
+#endif
+
     /* Repurpose the sector cache: drop any cached config sector, load the code
      * straight in (ReadBuffer bypasses the cache), and verify it in RAM before
-     * trusting it. Zeroing first leaves the app's .bss clean. */
+     * trusting it. Zeroing first leaves the app's .bss clean. The assets are
+     * verified first through the same buffer: a slot written by a host that
+     * does not know the asset area (older UV Studio) is refused here instead of
+     * handing the app unprogrammed flash. */
     PY25Q16_InvalidateCache();
+    bool assets_ok = true;
+    if (h.asset_size) {
+        PY25Q16_ReadBuffer(APP_SLOT_BASE(slot) + APP_ASSET_OFFSET, ws, h.asset_size);
+        assets_ok = (uint16_t)MB_Crc32Bytes(ws, h.asset_size) == h.asset_crc;
+    }
     memset(ws, 0, APP_OVERLAY_MAX);
     PY25Q16_ReadBuffer(APP_SLOT_BASE(slot) + APP_CODE_OFFSET, ws, h.code_size);
 
-    if (MB_Crc32Bytes(ws, h.code_size) != h.code_crc32) {
+    if (!assets_ok || MB_Crc32Bytes(ws, h.code_size) != h.code_crc32) {
         PY25Q16_InvalidateCache();
+#ifdef ENABLE_FEAT_F4HWN_RXTX_LOG
+        RXTX_LOG_Resume();
+#endif
         return APP_ERR_CRC;
     }
 
@@ -1121,17 +807,19 @@ uint8_t APP_LaunchOverlay(uint8_t slot)
     __DSB();
     __ISB();
 
-    app_run_slot = slot;   /* for cfg_load / cfg_save */
-    app_cfg_len  = 0;
+    app_state.run_slot   = slot;   /* for cfg_load / cfg_save / asset_read */
+    app_state.asset_size = h.asset_size;
+    app_state.cfg_len    = 0;
+    app_rng_mix();
 #ifdef ENABLE_FMRADIO
-    app_fm_dirty = false;
+    app_state.fm_dirty = false;
 #endif
 #ifdef ENABLE_FEAT_F4HWN_OVERLAY_BEAM
-    app_beam_dirty = false;
+    app_state.beam_dirty = false;
 #endif
 
-    app_allow_screen_saver = (h.flags & APP_FLAG_SCREEN_SAVER) != 0;
-    app_screen_saver_wake = false;
+    app_state.allow_screen_saver = (h.flags & APP_FLAG_SCREEN_SAVER) != 0;
+    app_state.screen_saver_wake = false;
     APP_ModalScreenSaverExit();
     BACKLIGHT_TurnOn();
 
@@ -1148,7 +836,10 @@ uint8_t APP_LaunchOverlay(uint8_t slot)
      * so an RF app (FoxHunt, a future S-meter, ...) would measure and display a
      * VFO the user did not pick - sometimes A, sometimes B. Point RX at the
      * selected (TX) VFO and retune so rx_freq(), rssi_dbm() and the tuned
-     * hardware all agree on the selected channel. Save all three pointers:
+     * hardware all agree on the selected channel. gCurrentVfo follows too:
+     * RADIO_SetTxParameters keys it, and dual watch may have left it on the
+     * other VFO, so a TX app (APRS TX, Beacon, SSTV) would transmit there while
+     * tx_freq() shows the selected one. Save all three pointers:
      * radio apps such as BEAM temporarily replace them while they run. */
     const uint8_t     saved_rx_vfo = gEeprom.RX_VFO;
     VFO_Info_t *const saved_rx      = gRxVfo;
@@ -1156,19 +847,15 @@ uint8_t APP_LaunchOverlay(uint8_t slot)
     VFO_Info_t *const saved_current = gCurrentVfo;
     gEeprom.RX_VFO = gEeprom.TX_VFO;
     gRxVfo         = gTxVfo;
+    gCurrentVfo    = gTxVfo;
     RADIO_SetupRegisters(true);
 
     app_entry_t entry = (app_entry_t)(((uint32_t)ws + h.entry_off) | 1u);
     entry(&app_api);
 
     APP_ModalScreenSaverExit();
-    app_allow_screen_saver = false;
-    app_screen_saver_wake = false;
-
-    /* A defensive leave also covers an app returning through an error path. */
-#ifdef ENABLE_FEAT_F4HWN_OVERLAY_TRIVFO
-    app_trivfo_leave();
-#endif
+    app_state.allow_screen_saver = false;
+    app_state.screen_saver_wake = false;
 
     /* Restore the resident RX/dual-watch tuning the app ran on top of. */
     gEeprom.RX_VFO = saved_rx_vfo;
@@ -1184,32 +871,24 @@ uint8_t APP_LaunchOverlay(uint8_t slot)
     app_beam_commit();
 #endif
 
-#ifdef ENABLE_FEAT_F4HWN_OVERLAY_TRIVFO
-    if (app_trivfo_ab_dirty) {
-        SETTINGS_SaveVfoIndices();
-        app_trivfo_ab_dirty = false;
-    }
-
-    for (uint8_t i = 0; i < 2u; i++) {
-        if (app_trivfo_freq_dirty & (1u << i))
-            SETTINGS_SaveChannel(gEeprom.VfoInfo[i].CHANNEL_SAVE, i,
-                                 &gEeprom.VfoInfo[i], 1);
-    }
-    app_trivfo_freq_dirty = 0;
-#endif
-
-    /* Commit any deferred config the app staged (RMW keeps the slot header). */
-    if (app_cfg_len) {
-        PY25Q16_WriteBuffer(APP_SLOT_BASE(slot) + APP_CFG_OFFSET, app_cfg_buf, app_cfg_len, false);
+    /* Commit any deferred config the app staged (RMW keeps the slot header),
+     * tagged with the app's name. */
+    if (app_state.cfg_len) {
+        const uint32_t base = APP_SLOT_BASE(slot);
+        PY25Q16_WriteBuffer(base + APP_CFG_OFFSET, app_state.cfg_buf, app_state.cfg_len, false);
+        PY25Q16_WriteBuffer(base + APP_CFG_OWNER, h.name, APP_NAME_LEN, false);
         PY25Q16_InvalidateCache();
     }
 #ifdef ENABLE_FMRADIO
     /* Commit the FM config + 48 channels the app edited (shared with resident FM). */
-    if (app_fm_dirty) {
-        app_fm_dirty = false;
+    if (app_state.fm_dirty) {
+        app_state.fm_dirty = false;
         SETTINGS_SaveFM();
         PY25Q16_InvalidateCache();
     }
+#endif
+#ifdef ENABLE_FEAT_F4HWN_RXTX_LOG
+    RXTX_LOG_Resume();
 #endif
     return APP_OK;
 }
@@ -1219,10 +898,23 @@ uint8_t APP_SlotErase(uint8_t slot)
     if (slot >= APP_SLOT_COUNT)
         return APP_ERR_SLOT;
     uint32_t base = APP_SLOT_BASE(slot);
+    /* An update erases the slot before the host rewrites it: keep the config
+     * and its owner tag across the erase (an untagged config is given the
+     * installed app's name), so that the same app finds its settings again. */
+    uint8_t keep[APP_CFG_OWNER + APP_NAME_LEN - APP_CFG_OFFSET];
+    uint8_t *const owner = keep + (APP_CFG_OWNER - APP_CFG_OFFSET);
+    app_header_t h;
+    PY25Q16_ReadBuffer(base + APP_CFG_OFFSET, keep, sizeof(keep));
+    if (*owner == 0xFFu && app_read_validated_header(slot, &h) == APP_OK)
+        memcpy(owner, h.name, APP_NAME_LEN);
     for (uint32_t off = 0; off < APP_SLOT_STRIDE; off += APP_SECTOR_SIZE)
         PY25Q16_SectorErase(base + off);
     PY25Q16_InvalidateCache();
-    app_shortcuts_cached = false;
+    if (*owner != 0xFFu) {
+        PY25Q16_WriteBuffer(base + APP_CFG_OFFSET, keep, sizeof(keep), false);
+        PY25Q16_InvalidateCache();
+    }
+    APP_NotifySlotChanged();
     return APP_OK;
 }
 
@@ -1234,7 +926,7 @@ uint8_t APP_SlotWrite(uint8_t slot, uint32_t offset, const uint8_t *data, uint32
         return APP_ERR_SIZE;
     PY25Q16_WriteBuffer(APP_SLOT_BASE(slot) + offset, data, len, false);
     PY25Q16_InvalidateCache();
-    app_shortcuts_cached = false;
+    app_state.shortcuts_cached = false;
     return APP_OK;
 }
 

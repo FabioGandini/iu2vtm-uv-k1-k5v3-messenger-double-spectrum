@@ -29,15 +29,23 @@
 
 void UI_DisplayAircopy(void)
 {
-    char String[16];
+    char String[20];
     char *pPrintStr;
 
     UI_DisplayClear();
 
+    const uint16_t totalBlocks = AIRCOPY_GetTotalBlocks();
+    // RX keeps listening briefly for a repeated final frame after all blocks arrive.
+    const bool receiveComplete = gAircopyState == AIRCOPY_TRANSFER &&
+                                 !gAirCopyIsSendMode &&
+                                 gAirCopyBlockNumber >= totalBlocks;
+    const bool uart = AIRCOPY_UsesUart();
+    const bool flash = AIRCOPY_IsFlash();
+
     if (gAircopyState == AIRCOPY_READY) {
-        pPrintStr = "AIR COPY(RDY)";
-    } else if (gAircopyState == AIRCOPY_TRANSFER) {
-        if (gAircopyAll) {
+        pPrintStr = flash ? "FLASH COPY" : uart ? "CABLE COPY" : "AIR COPY(RDY)";
+    } else if (gAircopyState == AIRCOPY_TRANSFER && !receiveComplete) {
+        if (gAircopyAll && !flash) {
             // All mode: show the slice being replicated in place of the title.
             const uint8_t m = AIRCOPY_CurrentSliceMap();
             if (m < AIRCOPY_NUM_BANKS)
@@ -46,31 +54,42 @@ void UI_DisplayAircopy(void)
                 strcpy(String, "SETTINGS");
             pPrintStr = String;
         } else {
-            pPrintStr = "AIR COPY";
+            pPrintStr = flash ? "FLASH COPY" : uart ? "CABLE COPY" : "AIR COPY";
         }
-    } else if (gAircopyState == AIRCOPY_COMPLETE) {
-        pPrintStr = "AIR COPY OK";
+    } else if (gAircopyState == AIRCOPY_COMPLETE || receiveComplete) {
+        pPrintStr = flash && !gAirCopyIsSendMode ? "FLASH REBOOT"
+                  : flash ? "FLASH COPY OK"
+                  : uart ? "CABLE COPY OK" : "AIR COPY OK";
     } else {
-        pPrintStr = "AIR COPY FAIL";
+        pPrintStr = flash ? "FLASH COPY FAIL" : uart ? "CABLE COPY FAIL" : "AIR COPY FAIL";
     }
 
     UI_PrintString(pPrintStr, 2, 127, 0, 8);
 
-    if (gInputBoxIndex == 0) {
-        uint32_t frequency = gRxVfo->freq_config_RX.Frequency;
-        sprintf(String, "%3u.%05u", frequency / 100000, frequency % 100000);
-        // show the remaining 2 small frequency digits
-        UI_PrintStringSmallNormal(String + 7, 97, 0, 3);
-        String[7] = 0;
-    } else {
-        const char *ascii = INPUTBOX_GetAscii();
-        sprintf(String, "%.3s.%.3s", ascii, ascii + 3);
+#ifdef ENABLE_AIRCOPY_UART
+    if (uart)
+    {
+        sprintf(String, "UART %u", (unsigned)AIRCOPY_UART_BAUD_RATE);
+        UI_PrintString(String, 2, 127, 2, 8);
+    }
+    else
+#endif
+    {
+        if (gInputBoxIndex == 0) {
+            uint32_t frequency = gRxVfo->freq_config_RX.Frequency;
+            sprintf(String, "%3u.%05u", frequency / 100000, frequency % 100000);
+            // show the remaining 2 small frequency digits
+            UI_PrintStringSmallNormal(String + 7, 97, 0, 3);
+            String[7] = 0;
+        } else {
+            const char *ascii = INPUTBOX_GetAscii();
+            sprintf(String, "%.3s.%.3s", ascii, ascii + 3);
+        }
+
+        // show the main large frequency digits
+        UI_DisplayFrequency(String, 16, 2, false);
     }
 
-    // show the main large frequency digits
-    UI_DisplayFrequency(String, 16, 2, false);
-
-    const uint16_t totalBlocks = AIRCOPY_GetTotalBlocks();
     uint16_t doneBlocks = gAirCopyBlockNumber;
 
     if (doneBlocks > totalBlocks)
@@ -79,8 +98,10 @@ void UI_DisplayAircopy(void)
     // Draw memory selection
     if (gAircopyState == AIRCOPY_READY) 
     {
-        if(gAircopyCurrentMapIndex < AIRCOPY_NUM_BANKS) {
-            sprintf(String, "MEM %03u - %03u", (gAircopyCurrentMapIndex * 128) + 1, (gAircopyCurrentMapIndex + 1) * 128);
+        if (flash) {
+            strcpy(String, "Flash 2M");
+        } else if(gAircopyCurrentMapIndex < AIRCOPY_NUM_BANKS) {
+            sprintf(String, "MEM %03u-%03u", (gAircopyCurrentMapIndex * 128) + 1, (gAircopyCurrentMapIndex + 1) * 128);
         } else if(gAircopyCurrentMapIndex == AIRCOPY_NUM_BANKS) {
             strcpy(String, "Settings");
         } else {
@@ -95,9 +116,10 @@ void UI_DisplayAircopy(void)
                                        ? 99u
                                        : gErrorsDuringAirCopy;
 
-        if (gAircopyState == AIRCOPY_COMPLETE || gAircopyState == AIRCOPY_FAILED) {
+        if (gAircopyState == AIRCOPY_COMPLETE || receiveComplete ||
+            gAircopyState == AIRCOPY_FAILED) {
             sprintf(String, "%s %u/%u %s:%u",
-                    gAircopyState == AIRCOPY_COMPLETE ? "OK" : "KO",
+                    gAircopyState == AIRCOPY_COMPLETE || receiveComplete ? "OK" : "KO",
                     doneBlocks, totalBlocks,
                     gAirCopyIsSendMode ? "RT" : "ER",
                     displayedErrors);
@@ -117,8 +139,22 @@ void UI_DisplayAircopy(void)
         // Match the former DDA gauge exactly, including its partial first pixel.
         const uint8_t filled = (doneBlocks * AIRCOPY_BAR_WIDTH + totalBlocks - 1u)
                              / totalBlocks;
+        // Common blocks stay hatched; copied blocks are solid.
+        static const uint8_t hatch[3] = { 0xA5, 0x89, 0x91 };
         for (uint8_t col = 0; col < AIRCOPY_BAR_WIDTH; col++)
-            gFrameBuffer[4][col + 4] = col < filled ? 0xBD : 0x81;
+            gFrameBuffer[4][col + 4] = col >= filled ? 0x81
+                                      : AIRCOPY_PixelWasCopied(col) ? 0xBD
+                                      : hatch[col % 3u];
+        // Leave one clear interior column on each side of a copied run.
+        for (uint8_t col = 0; col < filled; col++)
+        {
+            if (gFrameBuffer[4][col + 4] != 0xBD)
+                continue;
+            if (col > 0 && gFrameBuffer[4][col + 3] != 0xBD)
+                gFrameBuffer[4][col + 3] = 0x81;
+            if (col + 1u < filled && gFrameBuffer[4][col + 5] != 0xBD)
+                gFrameBuffer[4][col + 5] = 0x81;
+        }
         gFrameBuffer[4][124] = 0x81;
         gFrameBuffer[4][125] = 0x42;
         gFrameBuffer[4][126] = 0x3c;

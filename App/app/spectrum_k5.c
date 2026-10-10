@@ -1173,7 +1173,7 @@ static void DrawNums(void) {
         for (int x = 0; x < 22; x++)
           for (int y = 12; y < 20; y++)
             PutPixel(x, y, false);
-        sprintf(String, "M%i", peakChannel + 1);
+        sprintf(String, "M%d", peakChannel + 1);
         GUI_DisplaySmallest(String, 0, 13, false, true);
       }
     } else {

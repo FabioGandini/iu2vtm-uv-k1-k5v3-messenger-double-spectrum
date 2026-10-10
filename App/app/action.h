@@ -36,6 +36,10 @@ void ACTION_SwitchDemodul(void);
 
 #ifdef ENABLE_FEAT_F4HWN
     void ACTION_RxMode(void);
+#ifdef ENABLE_FEAT_F4HWN_FULL_WATCH
+    uint8_t ACTION_GetRxMode(void);
+    void ACTION_SetRxMode(uint8_t mode);
+#endif
     void ACTION_MainOnly(void);
     void ACTION_Ptt(void);
     void ACTION_Wn(void);

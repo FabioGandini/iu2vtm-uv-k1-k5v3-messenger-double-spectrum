@@ -27,6 +27,9 @@
 #include "radio.h"
 #include "settings.h"
 #include "version.h"
+#ifdef ENABLE_FEAT_F4HWN_OVERLAY_INFO
+    #include "stack_usage.h"
+#endif
 
 #ifdef ENABLE_FEAT_F4HWN
     #ifdef ENABLE_FMRADIO
@@ -81,6 +84,9 @@ void _putchar(__attribute__((unused)) char c)
 
 void Main(void)
 {
+#ifdef ENABLE_FEAT_F4HWN_OVERLAY_INFO
+    STACK_WatermarkInit();
+#endif
     SYSTICK_Init();
     BOARD_Init();
 
@@ -111,7 +117,11 @@ void Main(void)
 
     BOARD_ADC_GetBatteryInfo(&gBatteryCurrentVoltage, &gBatteryCurrent);
 
+#ifdef ENABLE_FEAT_F4HWN_MULTIBOOT_HOT_CFG
+    SETTINGS_InitEEPROM(false);
+#else
     SETTINGS_InitEEPROM();
+#endif
 
 #ifdef ENABLE_FEAT_F4HWN_RXTX_LOG
     RXTX_LOG_Init();

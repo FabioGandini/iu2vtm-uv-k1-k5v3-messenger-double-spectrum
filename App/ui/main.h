@@ -55,6 +55,9 @@ void UI_DisplayAudioScope(void);
 #endif
 void UI_MAIN_TimeSlice500ms(void);
 void UI_DisplayMain(void);
+#ifdef ENABLE_FEAT_F4HWN_FULL_WATCH
+void UI_MAIN_UpdateFullWatchArrows(void);
+#endif
 
 #ifdef ENABLE_FEAT_F4HWN_SCAN_PROGRESS
 void UI_MAIN_NotifyScanProgressDataChanged(void);

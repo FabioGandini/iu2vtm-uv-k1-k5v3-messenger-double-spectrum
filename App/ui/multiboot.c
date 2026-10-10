@@ -20,6 +20,9 @@
 #include "driver/gpio.h"
 #include "driver/keyboard.h"
 #include "driver/mb_flash.h"
+#ifdef ENABLE_FEAT_F4HWN_MULTIBOOT_HOT_CFG
+#include "driver/py25q16.h"
+#endif
 #include "driver/st7565.h"
 #include "driver/system.h"
 #include "ui/helper.h"
@@ -56,6 +59,17 @@ uint8_t MB_GetActiveBank(void)
 {
     return gActiveBank;
 }
+
+#ifdef ENABLE_FEAT_F4HWN_MULTIBOOT_HOT_CFG
+void MB_ApplyBankMapping(uint8_t bank)
+{
+    /* A cached sector belongs to the old physical bank. Drop it before the
+     * logical addresses start resolving against the new base. */
+    PY25Q16_InvalidateCache();
+    PY25Q16_SetBankBase(MB_BankBase(bank));
+    gActiveBank = bank;
+}
+#endif
 
 static const char *mb_error_text(uint8_t err)
 {
@@ -129,25 +143,6 @@ static void mb_status_bar(void)
      * the row) stays clear of the selected-slot capsule's top edge (bit 7). */
     for (uint8_t x = 2u; x < LCD_WIDTH - 2u; x++)
         gFrameBuffer[0][x] |= 0x08u;
-}
-
-/* Bottom key-hint line: each key name as an inverse 3x5 capsule label, its
- * action in plain 3x5 text beside it. Drawn on the bottom line
- * (gFrameBuffer[6] -> y = 6*8+1 = 49). MENU is pinned to the left and EXIT to
- * the right, leaving an airy gap in the middle. "MENU"/"EXIT" are 4 chars
- * (16 px); their capsule spans [x-2 .. x+16]. */
-static void mb_key_hints(const char *act_menu, const char *act_exit)
-{
-    const uint8_t sp = 6u;                              /* label <-> action gap  */
-    const uint8_t ae = (uint8_t)strlen(act_exit);
-    const uint8_t xm = 4u;                              /* MENU text; capsule at x=2 */
-    const uint8_t xe = (uint8_t)(124u - ae * 4u - sp - 16u); /* EXIT action ends at x=124 */
-
-    GUI_DisplaySmallestInverse("MENU", xm, 6, false, true, (uint8_t)(xm + 16u));
-    GUI_DisplaySmallest(act_menu, (uint8_t)(xm + 16u + sp), 49, false, true);
-
-    GUI_DisplaySmallestInverse("EXIT", xe, 6, false, true, (uint8_t)(xe + 16u));
-    GUI_DisplaySmallest(act_exit, (uint8_t)(xe + 16u + sp), 49, false, true);
 }
 
 /* Fixed selection capsule around the firmware name.  The slot index stays in
@@ -296,7 +291,7 @@ static void mb_render_slots(uint8_t selected,
             mb_invert_name(fbLine);
     }
 
-    mb_key_hints("SELECT", "QUIT");
+    UI_DrawMenuKeyHints("SELECT", "QUIT");
 
     ST7565_BlitStatusLine();
     ST7565_BlitFullScreen();
@@ -383,7 +378,7 @@ static void mb_confirm_screen(uint8_t slot)
     UI_DisplayClear();
     mb_status_bar();
     UI_PrintStringSmallNormal(title, 2, 126, 3);
-    mb_key_hints("CONFIRM", "BACK");
+    UI_DrawMenuKeyHints("CONFIRM", "BACK");
     ST7565_BlitStatusLine();
     ST7565_BlitFullScreen();
 }

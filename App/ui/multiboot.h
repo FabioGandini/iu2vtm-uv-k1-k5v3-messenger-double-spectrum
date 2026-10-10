@@ -39,4 +39,10 @@ uint8_t MB_BootResolveState(void);
 uint8_t MB_GetRunningSlot(void);
 uint8_t MB_GetActiveBank(void);
 
+#ifdef ENABLE_FEAT_F4HWN_MULTIBOOT_HOT_CFG
+/* Switch the live external-flash mapping after MB_SetActiveBank() has safely
+ * committed the persistent marker. The caller must then reload all settings. */
+void MB_ApplyBankMapping(uint8_t bank);
+#endif
+
 #endif

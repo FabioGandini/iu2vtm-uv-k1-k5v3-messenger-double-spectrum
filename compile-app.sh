@@ -23,6 +23,9 @@ APP_VMA=${APP_VMA:-0x20000280}      # pinned overlay VMA (Core/py32f071xb.ld)
 
 cd "$(dirname "$0")"
 
+# Prevent Git Bash/MSYS from rewriting container paths as Windows paths.
+export MSYS_NO_PATHCONV=1
+
 # --- discover apps (any App/apps/<name>/build.sh) ---
 ALL_APPS=()
 for d in "$APPS_DIR"/*/; do
@@ -63,30 +66,46 @@ echo "🚀 Building overlay apps"
 printf '   VMA %s · budget %d B / %d.00 KiB · out %s/\n\n' \
     "$APP_VMA" "$OVERLAY_MAX" "$((OVERLAY_MAX / 1024))" "$OUT_DIR"
 
-files=(); sizes=(); vmas=(); states=()
+files=(); sizes=(); vmas=(); states=(); asset_sizes=()
 fail=0
 
-read_u32le() { od -An -tx1 -j"$2" -N4 "$1" | awk '{printf "0x%s%s%s%s",$4,$3,$2,$1}'; }
+read_u32le() { od -An -tx1 -j"$2" -N4 "$1" | awk 'NF{printf "0x%s%s%s%s",$4,$3,$2,$1}'; }
+read_u16le() { od -An -tx1 -j"$2" -N2 "$1" | awk 'NF{printf "0x%s%s",$2,$1}'; }
 
 for app in "${TARGETS[@]}"; do
+    # Existing Windows clones may still contain CRLF app scripts even after
+    # .gitattributes is updated, so normalize the script before Bash reads it.
     if docker run --rm ${TTY_ARG:+"$TTY_ARG"} -u "$(id -u):$(id -g)" \
             -v "$PWD":/work -w "/work/$APPS_DIR/$app" \
             -e PATH="/opt/toolchain/bin:/usr/bin:/bin" -e APP_VMA="$APP_VMA" \
-            "$IMAGE" bash ./build.sh; then
+            "$IMAGE" bash -c "set -eo pipefail; rm -f -- \"\$1\"; sed 's/\r$//' ./build.sh | bash" \
+            bash "$app.map"; then
         appfile=$(ls -1 "$APPS_DIR/$app"/*.app 2>/dev/null | head -1)
         if [ -n "$appfile" ] && [ -f "$appfile" ]; then
             cp -f "$appfile" "$OUT_DIR/"
             base=$(basename "$appfile")
-            code=$(( $(wc -c < "$appfile") - 64 ))
+            code=$(( $(read_u32le "$appfile" 8) ))       # app_header_t.code_size
+            assets=$(( $(read_u16le "$appfile" 60) ))    # app_header_t.asset_size
             vma=$(read_u32le "$appfile" 52)
-            state="✅ OK"; [ "$code" -gt "$OVERLAY_MAX" ] && { state="🚨 OVERFLOW"; fail=1; }
+            state="✅ OK"; [ "$code" -gt "$OVERLAY_MAX" ] && { state="🚨 OVERFLOW (+$((code - OVERLAY_MAX)) B)"; fail=1; }
+            [ "$assets" -gt 0 ] && state="$state (+$assets B assets)"
         else
-            base="$app.app"; code=-1; vma="--"; state="❌ NO BLOB"; fail=1
+            base="$app.app"; code=-1; assets=0; vma="--"; state="❌ NO BLOB"; fail=1
         fi
     else
-        base="$app.app"; code=-1; vma="--"; state="❌ BUILD FAIL"; fail=1
+        base="$app.app"; code=-1; assets=0; vma="--"; state="❌ BUILD FAIL"; fail=1
+        # The linker still emits a map when the overlay size assertion fails.
+        # The container removes the previous map before building, so a compile
+        # error cannot be mistaken for an overflow from an earlier attempt.
+        mapfile="$APPS_DIR/$app/$app.map"
+        if [ -f "$mapfile" ]; then
+            map_size=$(awk '$1 == ".app" && $2 ~ /^0x[0-9a-fA-F]+$/ && $3 ~ /^0x[0-9a-fA-F]+$/ { print $3; exit }' "$mapfile")
+            if [[ "$map_size" =~ ^0x[0-9a-fA-F]+$ ]] && [ "$((map_size))" -gt "$OVERLAY_MAX" ]; then
+                state="🚨 OVERFLOW (+$((map_size - OVERLAY_MAX)) B; $((map_size)) / $OVERLAY_MAX B)"
+            fi
+        fi
     fi
-    files+=("$base"); sizes+=("$code"); vmas+=("$vma"); states+=("$state")
+    files+=("$base"); sizes+=("$code"); vmas+=("$vma"); states+=("$state"); asset_sizes+=("$assets")
 done
 
 # --- memory report (styled like the firmware Flash/RAM tables) ---
@@ -113,6 +132,36 @@ for i in "${!files[@]}"; do
     fi
 done
 
+# --- aggregate successful builds once for the table and final summary ---
+tot_code=0; tot_free=0; tot_assets=0; built=0
+for i in "${!files[@]}"; do
+    c=${sizes[$i]}
+    [ "$c" -ge 0 ] || continue
+    tot_code=$(( tot_code + c )); tot_free=$(( tot_free + OVERLAY_MAX - c ))
+    tot_assets=$(( tot_assets + ${asset_sizes[$i]} )); built=$(( built + 1 ))
+done
+
+# --- totals row (only meaningful with more than one app) ---
+if [ "${#files[@]}" -gt 1 ]; then
+    printf '%-16s-+-%9s-+-%9s-+-%9s-+-%9s-+-%7s-+-%s\n' \
+        "----------------" "---------" "---------" "---------" "---------" "-------" "----------"
+    if [ "$built" -gt 0 ]; then
+        # Usage = average fill of the built apps (total code / built x budget).
+        bp=$(( (tot_code * 10000 + built * OVERLAY_MAX / 2) / (built * OVERLAY_MAX) ))
+        ck100=$(( (tot_code * 100 + 512) / 1024 ));  fk100=$(( (tot_free * 100 + 512) / 1024 ))
+        printf -v pct   '%d.%02d%%' "$((bp/100))" "$((bp%100))"
+        printf -v ckib  '%d.%02d'   "$((ck100/100))" "$((ck100%100))"
+        printf -v fkib  '%d.%02d'   "$((fk100/100))" "$((fk100%100))"
+        tstate="$built/${#files[@]} apps, avg usage"
+        [ "$tot_assets" -gt 0 ] && tstate="$tstate (+$tot_assets B assets)"
+        printf '%-16s | %9d | %9s | %9d | %9s | %7s | %s\n' \
+            "TOTAL" "$tot_code" "$ckib" "$tot_free" "$fkib" "$pct" "$tstate"
+    else
+        printf '%-16s | %9s | %9s | %9s | %9s | %7s | %s\n' \
+            "TOTAL" "-" "-" "-" "-" "-" "0/${#files[@]} apps"
+    fi
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
     if [ "${#files[@]}" -eq 1 ]; then
@@ -122,5 +171,22 @@ if [ "$fail" -eq 0 ]; then
     fi
 else
     echo "⚠️  Some apps failed or overflowed — see the table above."
+fi
+
+echo
+if [ "$built" -gt 0 ]; then
+    super_total=$(( tot_code + tot_assets ))
+    apps_k100=$(( (tot_code * 100 + 512) / 1024 ))
+    assets_k100=$(( (tot_assets * 100 + 512) / 1024 ))
+    super_k100=$(( (super_total * 100 + 512) / 1024 ))
+    printf '✨ Super total (%d/%d apps)\n' "$built" "${#files[@]}"
+    printf '   Apps          %9d B  (%d.%02d KiB)\n' \
+        "$tot_code" "$((apps_k100/100))" "$((apps_k100%100))"
+    printf ' + Assets        %9d B  (%d.%02d KiB)\n' \
+        "$tot_assets" "$((assets_k100/100))" "$((assets_k100%100))"
+    printf ' = Apps + assets %9d B  (%d.%02d KiB)\n' \
+        "$super_total" "$((super_k100/100))" "$((super_k100%100))"
+else
+    printf '✨ Super total unavailable (0/%d apps built)\n' "${#files[@]}"
 fi
 exit $fail

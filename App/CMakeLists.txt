@@ -5,6 +5,8 @@ target_link_libraries(App INTERFACE PY32F071_Driver)
 target_compile_definitions(App INTERFACE PRINTF_INCLUDE_CONFIG_H)
 
 target_sources(App INTERFACE
+    # libgcc override (signed division)
+    compact_div.S
     # Drivers
     driver/backlight.c
     driver/bk4829.c
@@ -132,6 +134,14 @@ enable_feature(ENABLE_AIRCOPY
     app/aircopy.c
     ui/aircopy.c
 )
+enable_feature(ENABLE_AIRCOPY_UART)
+if(ENABLE_AIRCOPY_UART AND NOT (ENABLE_AIRCOPY AND ENABLE_UART))
+    message(FATAL_ERROR "ENABLE_AIRCOPY_UART requires ENABLE_AIRCOPY and ENABLE_UART.")
+endif()
+enable_feature(ENABLE_AIRCOPY_FLASH)
+if(ENABLE_AIRCOPY_FLASH AND NOT (ENABLE_AIRCOPY_UART AND ENABLE_FEAT_F4HWN_MULTIBOOT))
+    message(FATAL_ERROR "ENABLE_AIRCOPY_FLASH requires ENABLE_AIRCOPY_UART and ENABLE_FEAT_F4HWN_MULTIBOOT.")
+endif()
 enable_feature(ENABLE_NOAA)
 enable_feature(ENABLE_VOICE 
     driver/voice.c
@@ -202,6 +212,10 @@ if(NOT ENABLE_UART AND NOT ENABLE_USB)
 endif()
 
 enable_feature(ENABLE_FEAT_F4HWN)
+enable_feature(ENABLE_FEAT_F4HWN_FULL_WATCH)
+if(ENABLE_FEAT_F4HWN_FULL_WATCH AND NOT ENABLE_FEAT_F4HWN)
+    message(FATAL_ERROR "ENABLE_FEAT_F4HWN_FULL_WATCH requires ENABLE_FEAT_F4HWN.")
+endif()
 # GAME keeps the F+7 hook; the resident breakout.c is compiled only when the
 # overlay does NOT provide Breakout as an app (that is the flash we recover).
 if(ENABLE_FEAT_F4HWN_GAME)
@@ -214,14 +228,18 @@ enable_feature(ENABLE_FEAT_F4HWN_OVERLAY_APPS
     apps/app_overlay.c
     apps/app_menu.c
 )
-enable_feature(ENABLE_FEAT_F4HWN_OVERLAY_TRIVFO)
 enable_feature(ENABLE_FEAT_F4HWN_OVERLAY_BEAM)
+enable_feature(ENABLE_FEAT_F4HWN_OVERLAY_INFO
+    stack_usage.c
+)
 if(ENABLE_FEAT_F4HWN_OVERLAY_APPS AND NOT ENABLE_FEAT_F4HWN_MULTIBOOT_OVERLAY)
     message(FATAL_ERROR "ENABLE_FEAT_F4HWN_OVERLAY_APPS requires ENABLE_FEAT_F4HWN_MULTIBOOT_OVERLAY (the 4 KiB overlay workspace).")
 endif()
-if((ENABLE_FEAT_F4HWN_OVERLAY_TRIVFO OR ENABLE_FEAT_F4HWN_OVERLAY_BEAM) AND
-   NOT ENABLE_FEAT_F4HWN_OVERLAY_APPS)
-    message(FATAL_ERROR "Overlay Triple VFO/Beam services require ENABLE_FEAT_F4HWN_OVERLAY_APPS.")
+if(ENABLE_FEAT_F4HWN_OVERLAY_BEAM AND NOT ENABLE_FEAT_F4HWN_OVERLAY_APPS)
+    message(FATAL_ERROR "Overlay Beam service requires ENABLE_FEAT_F4HWN_OVERLAY_APPS.")
+endif()
+if(ENABLE_FEAT_F4HWN_OVERLAY_INFO AND NOT ENABLE_FEAT_F4HWN_OVERLAY_APPS)
+    message(FATAL_ERROR "Overlay system information requires ENABLE_FEAT_F4HWN_OVERLAY_APPS.")
 endif()
 enable_feature(ENABLE_FEAT_F4HWN_K5VIEWER 
     k5viewer.c
@@ -281,10 +299,23 @@ enable_feature(ENABLE_FEAT_F4HWN_MULTIBOOT
 if(ENABLE_FEAT_F4HWN_MULTIBOOT AND NOT ENABLE_FEAT_F4HWN)
     message(FATAL_ERROR "ENABLE_FEAT_F4HWN_MULTIBOOT requires ENABLE_FEAT_F4HWN (the SetCfg menu, SysInfo badge and multiboot UI all live under ENABLE_FEAT_F4HWN).")
 endif()
+enable_feature(ENABLE_FEAT_F4HWN_MULTIBOOT_HOT_CFG)
+if(ENABLE_FEAT_F4HWN_MULTIBOOT_HOT_CFG AND NOT ENABLE_FEAT_F4HWN_MULTIBOOT)
+    message(FATAL_ERROR "ENABLE_FEAT_F4HWN_MULTIBOOT_HOT_CFG requires ENABLE_FEAT_F4HWN_MULTIBOOT.")
+endif()
 enable_feature(ENABLE_FEAT_F4HWN_MULTIBOOT_OVERLAY)
 
 if(ENABLE_FEAT_F4HWN_MULTIBOOT_OVERLAY AND NOT ENABLE_FEAT_F4HWN_MULTIBOOT)
     message(FATAL_ERROR "ENABLE_FEAT_F4HWN_MULTIBOOT_OVERLAY requires ENABLE_FEAT_F4HWN_MULTIBOOT.")
+endif()
+
+# External-flash dump / restore over serial (host: UV Studio). Restore keeps the
+# device-specific calibration sector protected. Adds the
+# 0x0738 (read) / 0x073A (sector erase) / 0x073C (write) / 0x073E (CRC32) UART
+# commands and the PY25Q16 physical-address helpers they use.
+enable_feature(ENABLE_FEAT_F4HWN_EXT_FLASH_RW)
+if(ENABLE_FEAT_F4HWN_EXT_FLASH_RW AND NOT ENABLE_FEAT_F4HWN_MULTIBOOT)
+    message(FATAL_ERROR "ENABLE_FEAT_F4HWN_EXT_FLASH_RW requires ENABLE_FEAT_F4HWN_MULTIBOOT (the 0x0738/0x073A/0x073C/0x073E UART commands live under multiboot).")
 endif()
 
 enable_feature(ENABLE_FEAT_F4HWN_QRCODE)

@@ -26,6 +26,9 @@
 #endif
 #include "app/scanner.h"
 #include "bitmaps.h"
+#ifdef ENABLE_FEAT_F4HWN_MULTIBOOT_HOT_CFG
+#include "driver/mb_flash.h"
+#endif
 #include "driver/keyboard.h"
 #include "driver/st7565.h"
 #include "external/printf/printf.h"
@@ -35,6 +38,12 @@
 #include "settings.h"
 #include "ui/battery.h"
 #include "ui/helper.h"
+#ifdef ENABLE_FEAT_F4HWN_MENU_CAT
+#include "ui/menu.h"
+#endif
+#ifdef ENABLE_FEAT_F4HWN_MULTIBOOT_HOT_CFG
+#include "ui/multiboot.h"
+#endif
 #include "ui/ui.h"
 #include "ui/status.h"
 
@@ -94,7 +103,7 @@ void UI_DisplayStatus()
 
 #ifdef ENABLE_FEAT_F4HWN_RXTX_LOG
     // The filter label reuses the leftmost slot (pixels 2..16) normally
-    // reserved by the power-save and scan indicators; those two are skipped
+    // reserved by the config-bank and scan indicators; those two are skipped
     // on the log screen so the rest of the bar keeps its usual layout.
     const bool isRxTxLogScreen = gScreenToDisplay == DISPLAY_RXTX_LOG;
     if (isRxTxLogScreen) {
@@ -113,7 +122,7 @@ void UI_DisplayStatus()
     if (gSetting_set_tmr && (isTransmit || FUNCTION_IsRx())) {
 #endif
         convertTime(line, !isTransmit);
-        x += 39;
+        x += 35u;
     } else {
 #endif
 
@@ -126,9 +135,23 @@ void UI_DisplayStatus()
         if (!(gScanStateDir != SCAN_OFF || SCANNER_IsScanning()) && gIsNoaaMode) { // NOASS SCAN indicator
             memcpy(line + x, BITMAP_NOAA, sizeof(BITMAP_NOAA));
         }
-        // Power Save indicator
-        else if (gCurrentFunction == FUNCTION_POWER_SAVE) {
-            memcpy(line + x, gFontPowerSave, sizeof(gFontPowerSave));
+        else
+#endif
+#ifdef ENABLE_FEAT_F4HWN_MULTIBOOT_HOT_CFG
+        if (!(gScanStateDir != SCAN_OFF || SCANNER_IsScanning())) {
+            const uint8_t bank = MB_GetActiveBank();
+
+            if (bank < MB_BANK_COUNT) {
+                memcpy(line + x, gFontConfigBank[0], sizeof(gFontConfigBank[0]));
+                if (bank == 0u) {
+                    memcpy(line + x + sizeof(gFontConfigBank[0]),
+                           gFontConfigBank[1], sizeof(gFontConfigBank[0]));
+                } else {
+                    str[0] = (char)('0' + bank);
+                    str[1] = '\0';
+                    UI_PrintStringSmallBufferNormal(str, line + x + 6u);
+                }
+            }
         }
 #else
         // Power Save indicator
@@ -137,7 +160,7 @@ void UI_DisplayStatus()
         }
 #endif
     }
-    x += 8;
+    x += 8u;
 
     x1 = x;
 
@@ -157,7 +180,12 @@ void UI_DisplayStatus()
             if (IS_MR_CHANNEL(gNextMrChannel) && !SCANNER_IsScanning()) { // channel mode
                 uint8_t end = 0;
 
-                if(gEeprom.SCAN_LIST_DEFAULT == MR_CHANNELS_LIST + 1)
+                if (gEeprom.SCAN_LIST_DEFAULT == SCAN_LIST_MODE_MIX)
+                {
+                    strcpy(str, "MIX");
+                    end = 14;
+                }
+                else if(gEeprom.SCAN_LIST_DEFAULT == SCAN_LIST_MODE_ALL)
                 {
                     strcpy(str, "ALL");
                     end = 14;
@@ -201,7 +229,7 @@ void UI_DisplayStatus()
             x1 = x + 10;
         }
     }
-    x += 10;  // font character width
+    x += 10u;
 
     #ifdef ENABLE_FEAT_F4HWN_DEBUG
         // Only for debug
@@ -221,11 +249,12 @@ void UI_DisplayStatus()
         x += sizeof(BITMAP_VoicePrompt);
         #endif
 
-        if(!SCANNER_IsScanning()) {
+        if (gScanStateDir == SCAN_OFF && !SCANNER_IsScanning()) {
             if(!gAirCopyBootMode) {
-                const void *src = NULL;    // Pointer to the font/bitmap to copy
-                size_t sSize = 0;          // Size of the font/bitmap
-                uint8_t sOff = 2;          // Offset relative to the reference position
+                uint8_t *const modeLine = line + x - 1u;
+                const void *src = NULL;
+                size_t sSize = 0;
+                uint8_t sOff = 0;
 
                 #ifdef ENABLE_FEAT_F4HWN_RESCUE_OPS
                     if (gEeprom.MENU_LOCK) {
@@ -234,31 +263,34 @@ void UI_DisplayStatus()
                     } else 
                 #endif
                 {
-                    uint8_t xb = (gEeprom.CROSS_BAND_RX_TX != CROSS_BAND_OFF);
+                    const uint8_t xb = gEeprom.CROSS_BAND_RX_TX != CROSS_BAND_OFF;
 
                     if (gEeprom.DUAL_WATCH != DUAL_WATCH_OFF) {
-                        if (gDualWatchActive) { // DWR - dual watch + respond
-                            src = gFontDWR;
-                            sOff = xb ? 2 : 0;
-                            sSize = sizeof(gFontDWR) - (xb ? 5 : 0);
+                        if (gDualWatchActive) {
+                            const uint8_t (*font)[6] = gFontDWR;
+#ifdef ENABLE_FEAT_F4HWN_FULL_WATCH
+                            if (gEeprom.DUAL_WATCH == DUAL_WATCH_FULL)
+                                font = gFontFWR;
+#endif
+                            memcpy(modeLine + sOff, font[0], sizeof(font[0]));
+                            memcpy(modeLine + sOff + sizeof(font[0]),
+                                   font[xb ? 1u : 2u], sizeof(font[0]));
                         } else {
                             src = gFontHold;
-                            sOff = 3;
+                            sOff = 1u;
                             sSize = sizeof(gFontHold);
                         }
                     } else {
-                        src   = xb ? gFontXB         : gFontMO;          // XB - crossband
-                        sSize = xb ? sizeof(gFontXB) : sizeof(gFontMO);  // MO - main only
+                        src = xb ? gFontXB : gFontMO;
+                        sSize = xb ? sizeof(gFontXB) : sizeof(gFontMO);
                     }
                 }
 
-                // Perform the memcpy if a source was selected
-                if (src) {
-                    memcpy(line + x + sOff, src, sSize);
-                }
+                if (src != NULL)
+                    memcpy(modeLine + sOff, src, sSize);
             }
         }
-        x += sizeof(gFontDWR) + 3;
+        x += 17u;
     #endif
 
 #if defined(ENABLE_FEAT_F4HWN_RX_TX_TIMER) && !defined(ENABLE_FEAT_F4HWN_DEBUG)
@@ -269,25 +301,22 @@ void UI_DisplayStatus()
     // VOX indicator
     if (gEeprom.VOX_SWITCH) {
         memcpy(line + x, gFontVox, sizeof(gFontVox));
-        x1 = x + sizeof(gFontVox) + 1;
+        x1 = x + sizeof(gFontVox) + 1u;
     }
-    x += sizeof(gFontVox) + 3;
+    x += sizeof(gFontVox) + 5u;
 #endif
 
 #ifdef ENABLE_FEAT_F4HWN
     // PTT indicator
     if(!gAirCopyBootMode) {
-        if (gSetting_set_ptt_session) {
-            memcpy(line + x, gFontPttOnePush, sizeof(gFontPttOnePush));
-            x1 = x + sizeof(gFontPttOnePush) + 1;
-        }
-        else
-        {
-            memcpy(line + x, gFontPttClassic, sizeof(gFontPttClassic));
-            x1 = x + sizeof(gFontPttClassic) + 1;       
-        }
+        const void *src = gSetting_set_ptt_session
+                        ? (const void *)gFontPttOnePush
+                        : (const void *)gFontPttClassic;
+
+        memcpy(line + x, src, sizeof(gFontPttClassic));
+        x1 = x + sizeof(gFontPttClassic) + 1u;
     }
-    x += sizeof(gFontPttClassic) + 3;
+    x += sizeof(gFontPttClassic) + 5u;
 #endif
 
     x = MAX(x1, 69u);
@@ -338,6 +367,25 @@ void UI_DisplayStatus()
     }
 
     UI_DrawStatusBattery(line, str);
+
+#ifdef ENABLE_FEAT_F4HWN_MENU_CAT
+    if (gScreenToDisplay == DISPLAY_MENU) {
+        // "MENU" at category level, otherwise the uppercased category name.
+        const char *source = gMenuLevel == MENU_LEVEL_CAT
+                           ? "MENU"
+                           : CategoryNames[gMenuCategory];
+        char text[9];   // longest label ("Channels") + NUL
+        uint8_t n = 0;
+
+        // & 0xDF uppercases letters and keeps the NUL (labels are letters only).
+        while ((text[n] = (char)(source[n] & 0xDFu)) != '\0')
+            n++;
+
+        // Clear through the last pixel of the three-letter receiver-mode bitmap.
+        memset(line, 0, 36u);
+        GUI_DisplaySmallestInverse(text, 2, 0, true, true, (uint8_t)(2u + n * 4u));
+    }
+#endif
 
     // **************
 

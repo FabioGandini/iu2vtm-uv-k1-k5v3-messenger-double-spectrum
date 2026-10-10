@@ -213,7 +213,11 @@ extern const char* const            gSubMenu_W_N[2];
 extern const char* const            gSubMenu_OFF_ON[2];
 extern const char*                  gSubMenu_NA;
 extern const char* const            gSubMenu_TOT[11];
+#ifdef ENABLE_FEAT_F4HWN_FULL_WATCH
+extern const char* const            gSubMenu_RXMode[6];
+#else
 extern const char* const            gSubMenu_RXMode[4];
+#endif
 
 #ifdef ENABLE_VOICE
     extern const char* const        gSubMenu_VOICE[3];
@@ -269,13 +273,8 @@ extern const char* const            gSubMenu_SET_NAV[2];
     extern const char* const        gSubMenu_SCRAMBLER[11];
 #endif
 
-typedef struct /* __attribute__((packed)) */ {
-    const char* name; 
-    uint8_t     id;
-} t_sidefunction;
-
-extern const uint8_t         gSubMenu_SIDEFUNCTIONS_size;
-extern const t_sidefunction  gSubMenu_SIDEFUNCTIONS[];
+#define SIDEFUNCTION_COUNT ACTION_OPT_LEN
+extern const char *const gSubMenu_SIDEFUNCTIONS[ACTION_OPT_LEN];
                          
 extern bool              gIsInSubMenu;
                          

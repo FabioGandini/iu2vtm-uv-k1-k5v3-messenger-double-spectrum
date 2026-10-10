@@ -55,11 +55,11 @@ uint16_t TONE2_FREQ;
 
 #define NEXT_CHAR_DELAY 100 // 10ms tick
 
-char T9TableLow[9][4] = { {',', '.', '?', '!'}, {'a', 'b', 'c', '\0'}, {'d', 'e', 'f', '\0'}, {'g', 'h', 'i', '\0'}, {'j', 'k', 'l', '\0'}, {'m', 'n', 'o', '\0'}, {'p', 'q', 'r', 's'}, {'t', 'u', 'v', '\0'}, {'w', 'x', 'y', 'z'} };
-char T9TableUp[9][4] = { {',', '.', '?', '!'}, {'A', 'B', 'C', '\0'}, {'D', 'E', 'F', '\0'}, {'G', 'H', 'I', '\0'}, {'J', 'K', 'L', '\0'}, {'M', 'N', 'O', '\0'}, {'P', 'Q', 'R', 'S'}, {'T', 'U', 'V', '\0'}, {'W', 'X', 'Y', 'Z'} };
+const char T9TableLow[9][4] = { {',', '.', '?', '!'}, {'a', 'b', 'c', '\0'}, {'d', 'e', 'f', '\0'}, {'g', 'h', 'i', '\0'}, {'j', 'k', 'l', '\0'}, {'m', 'n', 'o', '\0'}, {'p', 'q', 'r', 's'}, {'t', 'u', 'v', '\0'}, {'w', 'x', 'y', 'z'} };
+const char T9TableUp[9][4] = { {',', '.', '?', '!'}, {'A', 'B', 'C', '\0'}, {'D', 'E', 'F', '\0'}, {'G', 'H', 'I', '\0'}, {'J', 'K', 'L', '\0'}, {'M', 'N', 'O', '\0'}, {'P', 'Q', 'R', 'S'}, {'T', 'U', 'V', '\0'}, {'W', 'X', 'Y', 'Z'} };
 unsigned char numberOfLettersAssignedToKey[9] = { 4, 3, 3, 3, 3, 3, 4, 3, 4 };
 
-char T9TableNum[9][4] = { {'1', '\0', '\0', '\0'}, {'2', '\0', '\0', '\0'}, {'3', '\0', '\0', '\0'}, {'4', '\0', '\0', '\0'}, {'5', '\0', '\0', '\0'}, {'6', '\0', '\0', '\0'}, {'7', '\0', '\0', '\0'}, {'8', '\0', '\0', '\0'}, {'9', '\0', '\0', '\0'} };
+const char T9TableNum[9][4] = { {'1', '\0', '\0', '\0'}, {'2', '\0', '\0', '\0'}, {'3', '\0', '\0', '\0'}, {'4', '\0', '\0', '\0'}, {'5', '\0', '\0', '\0'}, {'6', '\0', '\0', '\0'}, {'7', '\0', '\0', '\0'}, {'8', '\0', '\0', '\0'}, {'9', '\0', '\0', '\0'} };
 unsigned char numberOfNumsAssignedToKey[9] = { 1, 1, 1, 1, 1, 1, 1, 1, 1 };
 
 char cMessage[PAYLOAD_LENGTH];
@@ -533,7 +533,7 @@ void MSG_StorePacket(const uint16_t interrupt_bits) {
 	const bool rx_finished         = (interrupt_bits & BK4819_REG_02_FSK_RX_FINISHED) ? true : false;
 
 #ifdef ENABLE_UART
-	printf("\nMSG : S%i, F%i, E%i | %i", rx_sync, rx_fifo_almost_full, rx_finished, gFSKWriteIndex);
+	printf("\nMSG : S%d, F%d, E%d | %d", rx_sync, rx_fifo_almost_full, rx_finished, gFSKWriteIndex);
 #endif
 
 	if (rx_sync) {
@@ -762,7 +762,11 @@ void MSG_CheckRxTimeout(void) {
 					// diagnostic snapshot of the latched state, taken right before
 					// the re-init wipes it: log with a serial terminal (38400 8N1,
 					// Kenwood cable) to identify WHICH register actually latches
-					printf("\nSQLSTUCK 02=%04X 0C=%04X 67=%04X 7E=%04X 58=%04X 59=%04X 70=%04X 72=%04X 30=%04X 47=%04X 3F=%04X",
+					// hex 04X not supported by the minimal printf (only
+					// %d/%u/%o/%s/%c/%%); decimal is less readable for
+					// register bitfields but this is a serial-only
+					// diagnostic, not user-facing.
+					printf("\nSQLSTUCK 02=%u 0C=%u 67=%u 7E=%u 58=%u 59=%u 70=%u 72=%u 30=%u 47=%u 3F=%u",
 					       BK4819_ReadRegister(BK4819_REG_02),
 					       BK4819_ReadRegister(BK4819_REG_0C),
 					       BK4819_ReadRegister(BK4819_REG_67),

@@ -294,14 +294,17 @@ struct {
 
 // --------------------
 
-#seekto 0x00A138;
-// messenger encryption password (kamilsss655 port) stored in the old
-// AES key slot, unused on F4HWN firmwares
+#seekto 0x00A180;
+// messenger encryption password (kamilsss655 port). Moved off 0xA138 for
+// the v6.1.0 sync: that slot is upstream's own AES challenge-response key
+// (read, never written, by their code -- still moved for a clean split).
 char enc_key[16];
 
-#seekto 0x00A170;
+#seekto 0x00A178;
 // messenger station callsign auto-prepended to outgoing messages for ID
-// (IU2VTM port): 6 chars callsign + 2 chars radio id, e.g. "IU2VTM01"
+// (IU2VTM port): 6 chars callsign + 2 chars radio id, e.g. "IU2VTM01".
+// Moved off 0xA170 for the v6.1.0 sync: upstream's new Scan List Mix
+// editor now reads AND writes that address unconditionally.
 char callsign[8];
 
 // --------------------

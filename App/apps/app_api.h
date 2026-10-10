@@ -38,10 +38,17 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* First unpublished/public baseline: all services currently present below are
- * ABI major 1, API level 1. */
+/* API levels within ABI major 1, one per published release (what a release
+ * ships is frozen; services added before the next release join its level):
+ *   1  v6.0.0 baseline: every service up to and including beam_draw
+ *   2  ticks_ms, rand32, asset_read (+ app_header_t asset_size / asset_crc),
+ *      idivmod, uidivmod (the resident division helpers), Labs system info,
+ *      current and minimum-since-boot free stack/RAM margin */
 #define APP_ABI_MAJOR  1u
-#define APP_API_LEVEL  1u
+#define APP_API_LEVEL  2u
+
+/* Minimum API level of an app that ships read-only assets (pack_app.py). */
+#define APP_API_ASSETS 2u
 
 /* KEY codes mirrored from driver/keyboard.h (enum KEY_Code_e). Kept in sync by
  * value so the app stays independent of the firmware headers. */
@@ -81,45 +88,6 @@ typedef struct {
     uint8_t  is_mr;          /* memory mode                       */
     uint8_t  sel_ch;         /* selected memory channel 0..47     */
 } app_fm_state_t;
-
-/* Compact, pointer-free description of one receiver in the resident triple-VFO
- * service.  Overlay apps must never see VFO_Info_t directly: its layout varies
- * with firmware features and contains resident pointers. */
-typedef struct {
-    uint32_t frequency;            /* RX frequency, x10 Hz                    */
-    uint16_t channel;              /* memory channel, zero based              */
-    uint16_t step;                 /* step, 10 Hz units                        */
-    uint16_t code_value;           /* CTCSS x0.1 Hz or DCS octal source value  */
-    int16_t  rssi_dbm;             /* last/current corrected RSSI              */
-    uint8_t  modulation;
-    uint8_t  power;
-    uint8_t  bandwidth;
-    uint8_t  code_type;
-    uint8_t  code;
-    uint8_t  offset_direction;
-    uint8_t  reverse;
-    uint8_t  squelch;
-    uint8_t  flags;                /* APP_TRIVFO_* below                       */
-    char     name[11];             /* channel name, trimmed and NUL terminated */
-} app_trivfo_info_t;
-
-enum {
-    APP_TRIVFO_SELECTED  = 1u << 0,
-    APP_TRIVFO_TUNED     = 1u << 1,
-    APP_TRIVFO_RECEIVING = 1u << 2,
-    APP_TRIVFO_TX        = 1u << 3,
-    APP_TRIVFO_USER_POWER = 1u << 4,
-    APP_TRIVFO_AUDIO_BAR = 1u << 5,
-    APP_TRIVFO_GUI_CLASSIC = 1u << 6,
-    APP_TRIVFO_PTT_ONEPUSH = 1u << 7,
-};
-
-enum {
-    APP_TRIVFO_SCAN = 0,
-    APP_TRIVFO_RX   = 1,
-    APP_TRIVFO_HOLD = 2,
-    APP_TRIVFO_TX_STATE = 3,
-};
 
 /* Pointer-free BEAM channel description.  The resident bridge translates this
  * stable ABI type to/from feature-dependent VFO_Info_t. */
@@ -256,19 +224,11 @@ typedef struct app_api {
      * Returns 0 for any other key. Keep get_key() raw for spatial controls. */
     int8_t (*nav_dir)(uint8_t key);
 
-    /* ---- triple VFO (optional resident capability APP_CAP_TRIVFO) ----
-     * A and B are the live Main Display VFOs. C is a resident temporary VFO
-     * loaded from c_channel (or the first valid memory after B when invalid).
-     * tick is called every 20 ms by the app and returns APP_TRIVFO_* state. */
-    uint16_t (*trivfo_enter)(uint16_t c_channel);
-    void     (*trivfo_leave)(void);
-    void     (*trivfo_get)(uint8_t vfo, app_trivfo_info_t *info);
-    void     (*trivfo_select)(uint8_t vfo);
-    uint16_t (*trivfo_step)(uint8_t vfo, int8_t direction);
-    uint8_t  (*trivfo_tick)(void);
-    uint8_t  (*trivfo_ptt)(bool pressed); /* physical PTT edge; resident applies SetPTT */
-
-    /* ---- BEAM channel transfer (optional resident capability APP_CAP_BEAM) ---- */
+    /* ---- BEAM channel transfer ----
+     * APP_CAP_BEAM (v6.0.0, retired): every service below, FSK included.
+     * APP_CAP_BEAM2: only beam_prepare (tunes the channel, no FSK setup),
+     * beam_get, beam_save and beam_draw; the app drives the FSK modem through
+     * bk_read/bk_write, and beam_leave/send/rx/rx_poll are NULL. */
     void     (*beam_prepare)(void); /* tune the fixed narrow-band FSK channel */
     void     (*beam_leave)(void); /* defensively stop FSK before app return */
     void     (*beam_get)(app_beam_channel_t *channel); /* export selected VFO */
@@ -277,7 +237,56 @@ typedef struct app_api {
     void     (*beam_rx)(bool start);         /* arm or stop FSK reception */
     uint8_t  (*beam_rx_poll)(uint16_t *packet); /* APP_BEAM_RX_* */
     void     (*beam_draw)(const char *status); /* MAIN display with one BEAM center line */
+
+    /* ---- API level 2: time, randomness, read-only assets ---- */
+    /* Free-running millisecond clock with 10 ms resolution (SysTick).  Compare
+     * with unsigned subtraction: (api->ticks_ms() - start) >= period. */
+    uint32_t (*ticks_ms)(void);
+    /* xorshift32 PRNG, never 0.  The resident state persists across launches
+     * and is re-mixed with RSSI noise and SysTick jitter at each launch, so apps
+     * need no seed of their own. */
+    uint32_t (*rand32)(void);
+    /* Copy len bytes of this app's assets, starting at offset, into buf.  The
+     * read is clamped to the packed asset size; returns the byte count copied
+     * (0 past the end or when the app has no assets).  The loader verified the
+     * assets' CRC before launch.  buf may live in the overlay (.bss) or on the
+     * stack. */
+    uint16_t (*asset_read)(uint16_t offset, void *buf, uint16_t len);
+
+    /* ---- API level 2: integer division ---- */
+    /* The resident run-time helpers (the Cortex-M0+ has no divide
+     * instruction), so an app needs no libgcc division of its own: its
+     * __aeabi_idivmod / __aeabi_uidivmod (and the __aeabi_idiv / __aeabi_uidiv
+     * aliases) just forward here.  C division (truncated toward zero), the
+     * quotient in the low word (r0) and the remainder in the high word (r1), as
+     * the AEABI helpers return them; x / 0 gives 0, remainder x. */
+    uint64_t (*idivmod)(int32_t n, int32_t d);
+    uint64_t (*uidivmod)(uint32_t n, uint32_t d);
+
+#ifdef ENABLE_FEAT_F4HWN_OVERLAY_INFO
+    /* ---- API level 2: zero-code Labs system information ---- */
+    const char *sys_edition;
+    const char *sys_version;
+    const char *sys_build_date;
+    const char *sys_build_time;
+    const char *sys_build_commit;
+    const void *sys_flash_end;
+    const void *sys_ram_end;
+    const uint16_t *sys_battery_voltage;
+    const void *sys_battery_type;
+    unsigned int (*sys_battery_percent)(unsigned int voltage_10mV);
+    void (*sys_storage_read)(uint32_t address, void *buffer, uint32_t size);
+
+    /* ---- API level 2: stack watermark diagnostics ---- */
+    uint32_t (*sys_stack_free_now)(void);
+    uint32_t (*sys_stack_free_min)(void);
+#endif
 } app_api_t;
+
+#ifdef ENABLE_FEAT_F4HWN_OVERLAY_INFO
+_Static_assert(sizeof(app_api_t) == 328u,
+               "Labs system information must add exactly 52 API bytes");
+#endif
 
 /* BK4819 AF modes for set_af (mirror driver/bk4819.h values). */
 enum { APP_AF_MUTE = 0, APP_AF_FM = 1, APP_AF_AM = 7 };

@@ -70,7 +70,9 @@ static const AddrMapping_t ADDR_MAPPINGS[] = {
                                                 // Settings * 8 Bytes (0x00B000)            0x00A150 -> 0x00A158
                                                 // Settings F4HWN * 8 Bytes (0x00C000)      0x00A158 -> 0x00A160
                                                 // Settings Version * 16 Bytes              0x00A160 -> 0x00A170
-                                                // Settings Callsign * 8 Bytes              0x00A170 -> 0x00A178
+                                                // Settings Mixed Scan Lists * 8 Bytes      0x00A170 -> 0x00A178
+                                                // Settings Callsign * 8 Bytes (IU2VTM)     0x00A178 -> 0x00A180
+                                                // Settings Messenger Key * 16B (IU2VTM)    0x00A180 -> 0x00A190
 
     _MK_MAPPING(0x010000, 0x00B000, 0x00B200),  // Calibration 512 Bytes!!!
 
