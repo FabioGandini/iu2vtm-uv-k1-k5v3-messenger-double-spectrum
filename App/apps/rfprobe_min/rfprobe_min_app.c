@@ -1,7 +1,6 @@
-/* RF Probe MIN -- absolute minimal test, copying breakout's exact idiom.
- * No SysTick reads, no rssi_dbm(), no calibrate(), no ticks_ms(). Only
- * get_key()+EXIT and a visible counter, to isolate whether ANYTHING works
- * on this firmware build at all. */
+/* RF Probe MIN+RSSI -- same as the minimal test, plus ONE rssi_dbm() call
+ * per frame, to isolate whether touching the BK4819 is what breaks RF
+ * Probe (its only other real difference from this working minimal app). */
 #include <stdint.h>
 #include <stdbool.h>
 #include "../app_api.h"
@@ -15,7 +14,7 @@ void app_main(const app_api_t *api)
     A->backlight_on();
 
     A->display_clear();
-    A->print_normal("RFP MIN ALIVE", 0, 127, 0);
+    A->print_normal("RFP MIN+RSSI", 0, 127, 0);
     A->blit_full();
 
     uint16_t n = 0;
@@ -23,16 +22,20 @@ void app_main(const app_api_t *api)
         uint8_t key = A->get_key();
         if (key == APP_KEY_EXIT) break;
 
-        char buf[16];
+        int16_t rssi = A->rssi_dbm();   /* <-- the one new thing */
+
+        char buf[20];
         uint8_t i = 0;
         buf[i++] = 'n'; buf[i++] = ':';
         uint16_t v = ++n;
         char tmp[6]; uint8_t t = 0;
         do { tmp[t++] = (char)('0' + v % 10); v /= 10; } while (v);
         while (t) buf[i++] = tmp[--t];
-        buf[i++] = ' '; buf[i++] = 'k'; buf[i++] = ':';
-        v = key;
+        buf[i++] = ' '; buf[i++] = 'r'; buf[i++] = ':';
+        int32_t rv = rssi;
+        if (rv < 0) { buf[i++] = '-'; rv = -rv; }
         t = 0;
+        v = (uint16_t)rv;
         do { tmp[t++] = (char)('0' + v % 10); v /= 10; } while (v);
         while (t) buf[i++] = tmp[--t];
         buf[i] = 0;
