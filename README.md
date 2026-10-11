@@ -1,10 +1,15 @@
 # IU2VTM firmware for the UV-K1 and UV-K5 V3
 
 ##########################################
+
 COMPATIBLE WITH LABS APPS (OPEN WITH F+7)
+
 MESSENGER (LONG PRESS MENU)
+
 SPECTRUM F4HWN ( F+5)
+
 SPECTRUM KAMILL (F+8)
+
 ###########################################
 
 
