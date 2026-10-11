@@ -8,7 +8,7 @@ MESSENGER (LONG PRESS MENU)
 
 SPECTRUM F4HWN ( F+5)
 
-SPECTRUM KAMILL (F+8)
+ALTERNATIVE SPECTRUM (F+8)
 
 ###########################################
 
@@ -38,29 +38,8 @@ GOGUFW's earlier Messenger and multi-radio Range Check implementation also
 served as a reference during development. The messenger, crypto and
 channel-scan spectrum build on work by
 [@joaquimorg](https://github.com/joaquimorg) and
-[@kamilsss655](https://github.com/kamilsss655); see the upstream Credits below
+[@kamilsss655](https://github.com/kamilsss655); see the upstream Credits 
 for everyone else.
-
-## Credits
-
-Many thanks to various people:
-
-* [Muzkr](https://github.com/muzkr)
-* [Mrkusypl](https://github.com/mrkusypl)
-* [Andrej](https://github.com/Tunas1337)
-* [Egzumer](https://github.com/egzumer)
-* [OneOfEleven](https://github.com/OneOfEleven)
-* [DualTachyon](https://github.com/DualTachyon)
-* [Mikhail](https://github.com/fagci)
-* [Manuel](https://github.com/manujedi)
-* @wagner
-* @Lohtse Shar
-* [@Matoz](https://github.com/spm81)
-* @Davide
-* @Ismo OH2FTG
-* [OneOfEleven](https://github.com/OneOfEleven)
-* @d1ced95
-* and others I forget
 
 ## License
 
