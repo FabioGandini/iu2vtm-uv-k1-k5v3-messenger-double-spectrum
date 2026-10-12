@@ -133,5 +133,6 @@ void app_main(const app_api_t *api)
         A->blit_full();
 
         A->delay_ms(20);
+        A->backlight_update();   /* <-- the one never-tested call */
     }
 }
