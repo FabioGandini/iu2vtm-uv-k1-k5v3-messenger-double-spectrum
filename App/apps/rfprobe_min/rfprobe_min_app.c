@@ -84,6 +84,10 @@ static char *put(char *o, const char *s) { while (*s) *o++ = *s++; return o; }
 static void showResult(void)
 {
     char str[22];
+    A->display_clear();   /* <-- called a second time, like show() does
+                            * after a capture */
+    A->print_normal("RFP MIN+CAP", 0, 127, 0);
+    A->print_normal("PTT = capture 2.5s", 0, 127, 1);
     char *o = str;
     o = put(o, "edges:"); o = putu(o, edgeCount);
     o = put(o, " rate:");
@@ -99,7 +103,7 @@ void app_main(const app_api_t *api)
     A = api;
     A->backlight_on();
 
-    A->display_clear();
+    A->display_clear();   /* <-- the one never-tested call */
     A->print_normal("RFP MIN+CAP", 0, 127, 0);
     A->print_normal("PTT = capture 2.5s", 0, 127, 1);
     A->blit_full();
