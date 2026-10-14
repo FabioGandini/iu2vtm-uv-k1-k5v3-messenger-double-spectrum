@@ -539,6 +539,25 @@ static void app_fm_state(app_fm_state_t *s, bool write)
         gEeprom.FM_IsMrMode          = s->is_mr ? true : false;
         gEeprom.FM_SelectedChannel   = s->sel_ch;
     } else {
+        /* IU2VTM: gEeprom.FM_FrequencyPlaying is never loaded from EEPROM
+         * at boot (settings.c only loads FM_SelectedFrequency, under
+         * #ifdef ENABLE_FMRADIO) -- it's resident-only runtime state,
+         * normally seeded by the legacy FM_PlayAndUpdate() ("playing =
+         * selected") before first use. With ENABLE_FEAT_F4HWN_OVERLAY_APPS
+         * that resident state machine (App/app/fm.c under
+         * ENABLE_FMRADIO_EMBEDDED) never runs, so FM_FrequencyPlaying
+         * stayed at its zero-initialized value: Broadcast FM tuned BK1080
+         * to 0 Hz on first open -- audio path enabled correctly, just no
+         * station anywhere near 0 Hz, so it sounded like broken audio
+         * rather than a bad frequency. Same fallback as the resident code:
+         * if it's outside the current band's valid range, use the
+         * EEPROM-loaded FM_SelectedFrequency instead.
+         */
+        uint16_t lo = BK1080_GetFreqLoLimit(gEeprom.FM_Band);
+        uint16_t hi = BK1080_GetFreqHiLimit(gEeprom.FM_Band);
+        if (gEeprom.FM_FrequencyPlaying < lo || gEeprom.FM_FrequencyPlaying > hi)
+            gEeprom.FM_FrequencyPlaying = gEeprom.FM_SelectedFrequency;
+
         s->freq_playing = gEeprom.FM_FrequencyPlaying;
         s->sel_freq     = gEeprom.FM_SelectedFrequency;
         s->band         = gEeprom.FM_Band;
