@@ -385,6 +385,7 @@ static void app_beam_draw(const char *status)
 static int16_t  app_rssi_dbm(void)     { return BK4819_GetRSSI_dBm() + dBmCorrTable[gRxVfo->Band]; }
 static uint16_t app_bk_read(uint8_t r) { return BK4819_ReadRegister((BK4819_REGISTER_t)r); }
 static void     app_bk_write(uint8_t r, uint16_t v) { BK4819_WriteRegister((BK4819_REGISTER_t)r, v); }
+static uint16_t app_bk1080_read(uint8_t r) { return BK1080_ReadRegister((BK1080_Register_t)r); }
 static void     app_set_af(uint8_t m)  { BK4819_SetAF((BK4819_AF_Type_t)m); }
 static void     app_audio_path(bool on){ if (on) AUDIO_AudioPathOn(); else AUDIO_AudioPathOff(); }
 static void     app_prepare_tone(void) { BK4819_PrepareToPlayTone(true); }
@@ -710,6 +711,7 @@ static const app_api_t app_api = {
     .rssi_dbm         = app_rssi_dbm,
     .bk_read          = app_bk_read,
     .bk_write         = app_bk_write,
+    .bk1080_read      = app_bk1080_read,
     .set_agc          = BK4819_SetAGC,
     .set_af           = app_set_af,
     .audio_path       = app_audio_path,

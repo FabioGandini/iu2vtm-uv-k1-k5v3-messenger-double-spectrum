@@ -45,7 +45,7 @@
  *      idivmod, uidivmod (the resident division helpers), Labs system info,
  *      current and minimum-since-boot free stack/RAM margin */
 #define APP_ABI_MAJOR  1u
-#define APP_API_LEVEL  2u
+#define APP_API_LEVEL  3u
 
 /* Minimum API level of an app that ships read-only assets (pack_app.py). */
 #define APP_API_ASSETS 2u
@@ -172,6 +172,7 @@ typedef struct app_api {
     int16_t  (*rssi_dbm)(void);                  /* corrected RSSI of the RX VFO, dBm      */
     uint16_t (*bk_read)(uint8_t reg);            /* BK4819_ReadRegister                    */
     void     (*bk_write)(uint8_t reg, uint16_t v);/* BK4819_WriteRegister                  */
+    uint16_t (*bk1080_read)(uint8_t reg);        /* BK1080_ReadRegister (API level 3)      */
     void     (*set_agc)(bool on);                /* BK4819_SetAGC                          */
     void     (*set_af)(uint8_t mode);            /* BK4819_SetAF (APP_AF_* below)          */
     void     (*audio_path)(bool on);             /* AUDIO_AudioPathOn/Off                  */

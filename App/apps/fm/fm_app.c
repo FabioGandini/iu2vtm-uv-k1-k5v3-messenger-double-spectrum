@@ -164,6 +164,21 @@ static void draw(void)
     } else {
         freqBig(g.st.freq_playing);
     }
+
+    /* TEMP DIAGNOSTIC: raw BK1080 channel + status/RSSI registers, to see
+     * whether the chip itself is actually retuning when freq_playing
+     * changes on screen, and whether it reports a valid station. Remove
+     * once the "static everywhere" issue is understood. */
+    {
+        char diag[18], *d=diag;   /* separate, correctly-sized buffer: b[12]
+                                    * is too small for this diagnostic line */
+        uint16_t ch  = A->bk1080_read(0x03); /* BK1080_REG_03_CHANNEL */
+        uint16_t st  = A->bk1080_read(0x0A); /* BK1080_REG_10 (status/RSSI) */
+        *d++='c'; *d++=':'; d=putu(d,ch);
+        *d++=' '; *d++='s'; *d++=':'; d=putu(d,st);
+        *d='\0';
+        A->print_normal(diag,0,127,2);
+    }
 }
 static void show(void){ draw(); A->blit_status(); A->blit_full(); }
 
