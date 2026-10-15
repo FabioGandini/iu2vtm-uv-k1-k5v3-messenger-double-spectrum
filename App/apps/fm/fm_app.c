@@ -177,7 +177,10 @@ static void draw(void)
         *d++='c'; *d++=':'; d=putu(d,ch);
         *d++=' '; *d++='s'; *d++=':'; d=putu(d,st);
         *d='\0';
-        A->print_normal(diag,0,127,2);
+        A->print_normal(diag,0,127,4);  /* row 4: freqBig/display_freq use
+                                          * rows 1+2 (two physical rows per
+                                          * call), row 3 is the VFO/MR/scan
+                                          * status line -- row 4 is free */
     }
 }
 static void show(void){ draw(); A->blit_status(); A->blit_full(); }
