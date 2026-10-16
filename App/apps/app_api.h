@@ -172,7 +172,6 @@ typedef struct app_api {
     int16_t  (*rssi_dbm)(void);                  /* corrected RSSI of the RX VFO, dBm      */
     uint16_t (*bk_read)(uint8_t reg);            /* BK4819_ReadRegister                    */
     void     (*bk_write)(uint8_t reg, uint16_t v);/* BK4819_WriteRegister                  */
-    uint16_t (*bk1080_read)(uint8_t reg);        /* BK1080_ReadRegister (API level 3)      */
     void     (*set_agc)(bool on);                /* BK4819_SetAGC                          */
     void     (*set_af)(uint8_t mode);            /* BK4819_SetAF (APP_AF_* below)          */
     void     (*audio_path)(bool on);             /* AUDIO_AudioPathOn/Off                  */
@@ -282,6 +281,16 @@ typedef struct app_api {
     uint32_t (*sys_stack_free_now)(void);
     uint32_t (*sys_stack_free_min)(void);
 #endif
+
+    /* ---- API level 3: BK1080 (broadcast FM chip) register access ----
+     * Placed here, after the #endif above, so it stays the true last field
+     * (true append-only) whether or not ENABLE_FEAT_F4HWN_OVERLAY_INFO is
+     * built -- a field inserted inside an #ifdef block, or anywhere before
+     * one, shifts every later field's offset for whichever build doesn't
+     * take that branch, breaking ABI for every already-compiled app (this
+     * bk1080_read field was first added right after bk_write/bk_write
+     * above, which is exactly that mistake). */
+    uint16_t (*bk1080_read)(uint8_t reg);        /* BK1080_ReadRegister */
 } app_api_t;
 
 #ifdef ENABLE_FEAT_F4HWN_OVERLAY_INFO
